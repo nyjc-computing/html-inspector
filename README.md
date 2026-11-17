@@ -37,6 +37,40 @@ which is a 2×2 arrangement: **HTML** and **CSS** side by side on top, **Checkli
   raw.githubusercontent, both CORS-friendly) and finally through the proxy chain. MDN
   itself cannot be framed, so the article is always re-rendered by the tool.
 
+## HTML Doctor (editor/)
+
+`editor/editor.html` is a companion single-file app for **writing** HTML, not
+inspecting it: a beginner text editor on the left (line numbers, syntax
+colouring) and a live preview on the right. Only those two panels scroll — the
+page itself never grows scrollbars.
+
+Browsers quietly forgive HTML mistakes, which is exactly what confuses
+beginners, so the editor re-reads the code the strict way and marks what the
+browser silently fixed: wavy red/orange/blue underlines (error / warning /
+hint) plus dots on the line numbers. Hovering or clicking an underline opens a
+bottom pane with a plain-English explanation, the offending snippet and how to
+fix it; the pane also lists every finding for clicking through, and an
+▲/▼ button at the bottom-right collapses and expands it. It opens pre-filled
+with a deliberately buggy page so there is something to diagnose straight
+away; two correct examples are reachable via `?example=starter` and
+`?example=table`. Checks cover
+duplicate singleton elements (`<html>`, `<body>`…), intersecting tags
+(`<b><i></b></i>`), wrong parents (`<td>` without `<tr>`), unknown and
+HTML5-only tags, invalid attributes and attribute values, missing closing
+tags, closing tags on void elements (`</br>`), unclosed quotes, content in the
+wrong place (text in `<head>`, block elements inside `<p>`), unterminated
+`<title>`/`<style>`/`<script>`, stray `&`, and on the CSS side: unknown
+properties, invalid values, missing units, missing `:`/`;`/`}` and
+declarations outside a rule. Scope is HTML 4 (the course syllabus); HTML5-only
+tags get a warning, not an error, and a missing `<!doctype html>` is an error
+(quirks mode). Tab-indent, a preview that
+re-renders on its own shortly after each edit (a small amber note marks it as
+out of date in the meantime), and code that autosaves in the browser.
+
+No build step and no dependencies — it is a single file. Serve it from the repo
+root (`python scripts/dev_server.py`, then `/editor/editor.html`) or just open
+the file directly.
+
 ## Project structure
 
 ```
@@ -55,7 +89,8 @@ js/mdn.js           reference panel: local blurbs + markdown renderer for the MD
 js/quest.js         quest tracker state and UI (gamified RefG §4 checklist)
 js/main.js          boot: wires everything together, splitter, help dialog
 content/            bundled MDN articles (Markdown) for the syllabus elements
-scripts/            update-mdn-content.py — refresh the bundled articles
+scripts/            update-mdn-content.py — refresh the bundled MDN articles
+editor/editor.html  HTML Doctor — self-contained beginner editor with linting
 favicon.svg,        the </> mark (SVG + PNG fallbacks)
 favicon-32.png,
 apple-touch-icon.png

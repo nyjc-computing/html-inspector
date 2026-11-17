@@ -1,0 +1,2089 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTML Doctor — an HTML editor that shows what the browser quietly forgives</title>
+<style>
+/* ============================================================
+   LAYOUT — chrome never scrolls; only the editor and the
+   preview (iframe) scroll.
+   ============================================================ */
+:root{
+  --mono: ui-monospace,Consolas,'Cascadia Mono',Menlo,monospace;
+  --ui: system-ui,'Segoe UI',Arial,sans-serif;
+  --bg:#eef0f3; --panel:#fff; --line:#d9dde3; --ink:#1f2328; --dim:#6a737d;
+  --err:#d1242f; --warn:#9a6700; --info:#0969da;
+  --errbg:rgba(209,36,47,.12); --warnbg:rgba(154,103,0,.16); --infobg:rgba(9,105,218,.10);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{font:14px/1.45 var(--ui);color:var(--ink);background:var(--bg);
+     display:flex;flex-direction:column}
+button,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 12px}
+button:hover{background:#f0f3f7}
+
+header#top{flex:0 0 auto;display:flex;align-items:center;gap:10px;
+  padding:7px 14px;background:#111827;color:#f9fafb}
+#top h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.01em}
+#top .sub{color:#9ca3af;font-weight:400;font-size:12.5px;margin-left:10px}
+#top-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+#help-btn{background:transparent;border-color:#374151;color:#e5e7eb}
+
+main{flex:1;display:flex;min-height:0;min-width:0}
+.pane-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:4px 12px;
+  font-size:11.5px;color:var(--dim);border-bottom:1px solid var(--line);background:#fafbfc;
+  text-transform:uppercase;letter-spacing:.07em;font-weight:600;user-select:none}
+.pane-head .note{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400}
+
+#editor-pane{flex:0 0 50%;min-width:280px;display:flex;flex-direction:column;background:var(--panel)}
+#split{flex:0 0 6px;cursor:col-resize;background:var(--bg);
+  border-left:1px solid var(--line);border-right:1px solid var(--line)}
+#split:hover,#split.drag{background:#b9c6d4}
+#preview-pane{flex:1;min-width:240px;display:flex;flex-direction:column;background:var(--panel)}
+#pv{flex:1;width:100%;border:0;background:#fff;min-height:0}
+.pane-head .note.stale{color:var(--warn);font-weight:600;animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+#editor{flex:1;display:flex;min-height:0;position:relative}
+#gutter{flex:0 0 52px;position:relative;overflow:hidden;background:#fafbfc;
+  border-right:1px solid var(--line);user-select:none;cursor:pointer}
+#gutter-in{position:absolute;left:0;right:0;top:0;padding:8px 0;font:14px/22px var(--mono)}
+.ln{position:relative;height:22px;color:#9aa4b2;text-align:right;padding-right:10px}
+.ln .dot{position:absolute;left:7px;top:6px;width:9px;height:9px;border-radius:50%}
+.dot.err{background:var(--err)} .dot.warn{background:var(--warn)} .dot.info{background:var(--info)}
+.ln.err{color:var(--err);font-weight:700}
+.ln.warn{color:var(--warn)} .ln.info{color:var(--info)}
+
+#codebox{flex:1;position:relative;min-width:0;overflow:hidden}
+#hl,#code{position:absolute;inset:0;margin:0;border:0;padding:8px 12px;
+  font:14px/22px var(--mono);tab-size:4;white-space:pre;letter-spacing:0}
+#hl{pointer-events:none;z-index:0;overflow:hidden;color:var(--ink);min-width:100%;min-height:100%}
+#code{z-index:1;display:block;background:transparent;color:transparent;
+  -webkit-text-fill-color:transparent;caret-color:#111;resize:none;outline:none;
+  overflow:auto;white-space:pre;word-wrap:normal;overflow-wrap:normal}
+#code::selection{background:rgba(9,105,218,.20)}
+#code::-webkit-scrollbar{width:12px;height:12px}
+#code::-webkit-scrollbar-thumb{background:#c9ced6;border:3px solid #fff;border-radius:8px}
+#code::-webkit-scrollbar-thumb:hover{background:#aeb6c2}
+
+/* ---- syntax colours ---- */
+.tk-p{color:#8b949e}
+.tk-name{color:#8250df;font-weight:600}
+.tk-an{color:#0550ae}
+.tk-av{color:#0a3069}
+.tk-cm{color:#8b949e;font-style:italic}
+.tk-dt{color:#59636e}
+.tk-css{color:#5a32a3}
+.tk-raw{color:#57606a}
+
+/* ---- error marks ---- */
+.e{border-radius:2px;text-decoration-skip-ink:none;text-underline-offset:3px}
+.e-err{background:var(--errbg);text-decoration:underline wavy var(--err);text-decoration-thickness:1.5px}
+.e-warn{background:var(--warnbg);text-decoration:underline wavy var(--warn);text-decoration-thickness:1.5px}
+.e-info{background:var(--infobg);text-decoration:underline dotted var(--info)}
+.e-err.active{background:rgba(209,36,47,.30)}
+.e-warn.active{background:rgba(154,103,0,.32)}
+.e-info.active{background:rgba(9,105,218,.26)}
+
+/* ============================================================
+   BOTTOM PANEL — slim bar always visible; details open on
+   hover / click of a highlighted error.
+   ============================================================ */
+#panel{flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);
+  display:flex;flex-direction:column;min-height:0}
+#panel-bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:5px 12px;font-size:12.5px;min-height:28px}
+#counts .n-err{color:var(--err);font-weight:700}
+#counts .n-warn{color:var(--warn);font-weight:700}
+#counts .n-info{color:var(--info);font-weight:700}
+#counts .ok{color:#1a7f37;font-weight:700}
+#hint{color:var(--dim)}
+#panel-toggle{margin-left:auto;min-width:26px;padding:1px 6px;border:0;background:transparent;
+  font-size:13px;color:var(--dim)}
+#panel-toggle:hover{color:var(--ink);background:#eef1f5}
+#panel-body{display:none;height:200px;border-top:1px solid var(--line);min-height:0}
+#panel.open #panel-body{display:grid;grid-template-columns:320px 1fr}
+#err-list{margin:0;padding:4px 0;list-style:none;overflow:auto;border-right:1px solid var(--line)}
+#err-list li{display:flex;gap:8px;padding:4px 10px 4px 12px;cursor:pointer;font-size:12.5px;align-items:flex-start}
+#err-list li:hover,#err-list li.active{background:#eef2f7}
+.row-sev{flex:0 0 9px;width:9px;height:9px;border-radius:50%;margin-top:4px}
+.row-msg{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-loc{flex:0 0 auto;color:var(--dim);font:11.5px var(--mono);margin-top:1px}
+#err-detail{overflow:auto;padding:12px 18px;font-size:13.5px;line-height:1.55}
+#err-detail h3{margin:0 0 2px;font-size:14.5px}
+#err-detail .sev-chip{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;border-radius:4px;padding:1px 7px;margin-right:8px;vertical-align:2px}
+.sev-chip.err{background:var(--errbg);color:var(--err)}
+.sev-chip.warn{background:var(--warnbg);color:var(--warn)}
+.sev-chip.info{background:var(--infobg);color:var(--info)}
+.det-loc{color:var(--dim);font:12px var(--mono);margin:2px 0 8px}
+.det-snip{font:12.5px/1.5 var(--mono);background:#f6f8fa;border:1px solid var(--line);
+  padding:6px 10px;border-radius:4px;margin-top:10px;white-space:pre-wrap;word-break:break-all}
+.det-fix{background:#f2faf4;border-left:3px solid #1a7f37;padding:7px 12px;margin-top:10px;border-radius:0 4px 4px 0}
+.det-fix b{color:#1a7f37}
+.det-hint{color:var(--dim)}
+
+/* ---- help dialog ---- */
+dialog#help{max-width:680px;width:92vw;max-height:85vh;overflow:auto;border:1px solid var(--line);
+  border-radius:10px;padding:0;font-size:13.5px;background:#fff;color:var(--ink)}
+dialog#help::backdrop{background:rgba(17,24,39,.45)}
+dialog#help header{display:flex;align-items:center;padding:12px 18px;background:#111827;color:#fff;
+  border-radius:10px 10px 0 0;position:sticky;top:0}
+dialog#help header h2{margin:0;font-size:15px}
+dialog#help .bd{padding:12px 18px 18px}
+dialog#help h3{font-size:13.5px;margin:16px 0 4px}
+dialog#help code{font:12.5px var(--mono);background:#f2f4f7;border-radius:3px;padding:0 4px}
+dialog#help .sev-legend span{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+dialog#help table{border-collapse:collapse;width:100%;font-size:12.5px}
+dialog#help td,dialog#help th{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
+dialog#help th{background:#f2f4f7}
+</style>
+</head>
+<body>
+
+<header id="top">
+  <h1>HTML Doctor</h1>
+  <span class="sub">type HTML on the left, see it live on the right — squiggly underlines show what the browser is quietly forgiving</span>
+  <div id="top-actions">
+    <button id="help-btn" title="What does the Doctor check?">?</button>
+  </div>
+</header>
+
+<main>
+  <section id="editor-pane">
+    <div class="pane-head">HTML <span class="note" id="pos">line 1, col 1</span></div>
+    <div id="editor">
+      <div id="gutter" title="Click a marked line to see its problem"><div id="gutter-in"></div></div>
+      <div id="codebox">
+        <pre id="hl" aria-hidden="true"></pre>
+        <textarea id="code" spellcheck="false" wrap="off" autocomplete="off"
+          autocorrect="off" autocapitalize="off" aria-label="HTML source"></textarea>
+      </div>
+    </div>
+  </section>
+  <div id="split" title="Drag to resize"></div>
+  <section id="preview-pane">
+    <div class="pane-head">Preview <span class="note" id="pv-note">updates as you type</span></div>
+    <iframe id="pv" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="HTML preview"></iframe>
+  </section>
+</main>
+
+<div id="panel">
+  <div id="panel-bar">
+    <span id="counts"></span>
+    <span id="hint">Hover or click a squiggly underline (or a red line number) to see what's wrong.</span>
+    <button id="panel-toggle" title="Show details">▲</button>
+  </div>
+  <div id="panel-body">
+    <ul id="err-list"></ul>
+    <div id="err-detail"><span class="det-hint">Pick a problem from the list, or hover one of the underlines in the editor.</span></div>
+  </div>
+</div>
+
+<dialog id="help">
+  <header><h2>What does the Doctor check?</h2></header>
+  <div class="bd">
+    <p>Browsers hide HTML mistakes to keep pages looking fine — which is friendly, but confusing
+       when your page does something you didn't expect. The Doctor re-reads your code the strict
+       way and marks everything the browser silently forgives, decides, or moves around.</p>
+    <p class="sev-legend">
+      <span style="background:var(--err)"></span><b>error</b> — the code is invalid; browsers guess what you meant.
+      &nbsp; <span style="background:var(--warn)"></span><b>warning</b> — legal-looking but the browser will reshuffle it.
+      &nbsp; <span style="background:var(--info)"></span><b>hint</b> — allowed, but worth knowing.
+    </p>
+    <h3>HTML checks</h3>
+    <table>
+      <tr><th>Check</th><th>Example</th></tr>
+      <tr><td>Missing doctype</td><td><code>&lt;!doctype html&gt;</code> must be the very first line — without it the browser renders in "quirks mode"</td></tr>
+      <tr><td>Singleton elements used twice</td><td>a second <code>&lt;body&gt;</code>, <code>&lt;head&gt;</code>, <code>&lt;html&gt;</code> or <code>&lt;title&gt;</code></td></tr>
+      <tr><td>Tags that intersect (crossed nesting)</td><td><code>&lt;b&gt;&lt;i&gt;&lt;/b&gt;&lt;/i&gt;</code> — close inner tags first</td></tr>
+      <tr><td>Wrong parent (hierarchy)</td><td><code>&lt;td&gt;</code> directly inside <code>&lt;table&gt;</code> without a <code>&lt;tr&gt;</code></td></tr>
+      <tr><td>Invalid tag</td><td><code>&lt;imag&gt;</code>, <code>&lt;seciton&gt;</code> — browsers show them as plain text</td></tr>
+      <tr><td>Invalid attribute for the element</td><td><code>&lt;img scr="…"&gt;</code></td></tr>
+      <tr><td>Invalid attribute value</td><td><code>align="centre"</code>, <code>colspan="x"</code></td></tr>
+      <tr><td>Missing closing tag</td><td>a <code>&lt;div&gt;</code> never closed</td></tr>
+      <tr><td>Closing tag on a void element</td><td><code>&lt;/br&gt;</code> — <code>&lt;br&gt;</code> has no content</td></tr>
+      <tr><td>Stray closing tag</td><td><code>&lt;/div&gt;</code> with nothing open</td></tr>
+      <tr><td>Unclosed quote in an attribute</td><td><code>alt="my photo</code> — swallows the rest of the line</td></tr>
+      <tr><td>Content in the wrong place</td><td>visible content inside <code>&lt;head&gt;</code> (browsers move it), <code>&lt;style&gt;</code> in <code>&lt;body&gt;</code></td></tr>
+      <tr><td>Block element inside a paragraph</td><td><code>&lt;p&gt;&lt;div&gt;…&lt;/div&gt;&lt;/p&gt;</code> — the paragraph splits in two</td></tr>
+      <tr><td>Unterminated <code>&lt;title&gt;</code>/<code>&lt;style&gt;</code>/<code>&lt;script&gt;</code></td><td>everything after it disappears from the page</td></tr>
+      <tr><td>Stray <code>&amp;</code></td><td>write <code>&amp;amp;</code></td></tr>
+    </table>
+    <h3>CSS checks (inside <code>&lt;style&gt;</code> and <code>style="…"</code>)</h3>
+    <table>
+      <tr><th>Check</th><th>Example</th></tr>
+      <tr><td>Unknown property</td><td><code>colour: red;</code></td></tr>
+      <tr><td>Invalid value</td><td><code>color: 12px;</code>, <code>float: up;</code></td></tr>
+      <tr><td>Missing unit on a length</td><td><code>margin: 10;</code> → <code>margin: 10px;</code></td></tr>
+      <tr><td>Missing <code>:</code> or <code>;</code></td><td><code>font-family Arial;</code></td></tr>
+      <tr><td>Missing <code>}</code></td><td>a rule never closed — everything after it joins that rule</td></tr>
+      <tr><td>Declarations outside a rule</td><td><code>color: red;</code> sitting above all the <code>{ }</code></td></tr>
+    </table>
+    <h3>Tips</h3>
+    <ul>
+      <li><b>Tab</b> indents. <b>Esc</b> collapses this details pane — the ▲ button at the bottom-right brings it back.</li>
+      <li>The preview re-renders automatically shortly after you stop typing — a small amber note tells you when it is momentarily out of date.</li>
+      <li>The page opens pre-filled with a buggy example on purpose: hover the underlines to diagnose it. Correct examples: <code>?example=starter</code> and <code>?example=table</code> in the address.</li>
+      <li>Only HTML 4 elements are in scope (that's the course syllabus). HTML5-only tags such as
+          <code>&lt;header&gt;</code> get a warning, not an error.</li>
+      <li>Elements whose closing tag HTML 4 lets you omit (<code>&lt;li&gt;</code>, <code>&lt;p&gt;</code>,
+          <code>&lt;td&gt;</code>…) are never flagged — but adding the closing tag makes the structure easier to see.</li>
+      <li>Your code is saved in this browser automatically.</li>
+    </ul>
+    <p style="text-align:right"><button onclick="document.getElementById('help').close()">Close</button></p>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const $ = s => document.querySelector(s);
+function escH(s){ return s.replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function trunc(s, n){ s = s.replace(/\s+/g,' ').trim(); return s.length > n ? s.slice(0, n-1) + '…' : s; }
+function lev(a, b){                       /* small Levenshtein for did-you-mean */
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 3) return 9;
+  const d = Array.from({length: m+1}, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[m][n];
+}
+function suggest(word, candidates){
+  let best = null, bestD = 9;
+  for (const c of candidates){
+    const dd = lev(word.toLowerCase(), c.toLowerCase());
+    if (dd < bestD){ bestD = dd; best = c; }
+  }
+  return bestD <= (word.length <= 4 ? 1 : 2) ? best : null;
+}
+
+/* ============================================================
+   HTML4 DATA — elements, attributes, hierarchy
+   ============================================================ */
+const CORE   = 'id class style title';
+const I18N   = 'lang dir';
+const EVENTS = 'onclick ondblclick onmousedown onmouseup onmouseover onmousemove onmouseout onkeypress onkeydown onkeyup';
+
+/* element -> extra attributes (beyond the global groups below) */
+const ELEMENTS = {
+  a:'href name target rel rev charset type hreflang accesskey tabindex shape coords onfocus onblur',
+  abbr:'', acronym:'', address:'',
+  applet:'codebase code name archive alt object align height width hspace vspace',
+  area:'shape coords href nohref alt target tabindex accesskey onfocus onblur',
+  b:'', base:'href', basefont:'size color face', bdo:'dir',
+  big:'', blockquote:'cite', body:'onload onunload alink background bgcolor link text vlink', br:'clear',
+  button:'name value type disabled tabindex accesskey onfocus onblur',
+  caption:'align', center:'', cite:'', code:'',
+  col:'span width align char charoff valign', colgroup:'span width align char charoff valign',
+  dd:'', del:'cite datetime', dfn:'', dir:'compact', div:'', dl:'', dt:'',
+  em:'', fieldset:'', font:'size color face',
+  form:'action method enctype accept-charset name target onsubmit onreset accept',
+  frame:'longdesc marginwidth marginheight noresize scrolling frameborder src name',
+  frameset:'rows cols onload onunload',
+  h1:'align', h2:'align', h3:'align', h4:'align', h5:'align', h6:'align',
+  head:'profile', hr:'align noshade size width', html:'lang dir version',
+  i:'', iframe:'longdesc marginwidth marginheight scrolling frameborder align src name width height',
+  img:'longdesc align border hspace vspace usemap ismap src alt name width height',
+  input:'type name value checked disabled readonly size maxlength src alt usemap tabindex accesskey accept align onselect onchange onfocus onblur',
+  ins:'cite datetime', isindex:'prompt', kbd:'',
+  label:'for accesskey onfocus onblur', legend:'accesskey align', li:'type value',
+  link:'charset hreflang media rel rev href type target',
+  map:'name', menu:'compact', meta:'content http-equiv name scheme',
+  noframes:'', noscript:'',
+  object:'classid codebase codetype data type archive standby height width usemap name tabindex align border hspace vspace declare',
+  ol:'type start compact', optgroup:'label disabled', option:'selected disabled label value',
+  p:'align', param:'name value valuetype type', pre:'width', q:'cite', s:'', samp:'',
+  script:'charset defer language src type event for',
+  select:'name size multiple disabled tabindex onchange onfocus onblur',
+  small:'', span:'', strike:'', strong:'', style:'media title type', sub:'', sup:'',
+  table:'summary align bgcolor border cellpadding cellspacing frame rules width',
+  tbody:'align char charoff valign',
+  td:'abbr align axis bgcolor char charoff colspan headers nowrap rowspan scope valign width height',
+  textarea:'accesskey cols disabled name onchange onfocus onblur onselect readonly rows tabindex',
+  tfoot:'align char charoff valign',
+  th:'abbr align axis bgcolor char charoff colspan headers nowrap rowspan scope valign width height',
+  thead:'align char charoff valign',
+  title:'', tr:'align bgcolor char charoff valign',
+  tt:'', u:'', ul:'type compact', 'var':''
+};
+/* which global attribute groups each element accepts; default = core+i18n+events */
+const GLOBALS = {
+  html:'i', head:'i', title:'i', meta:'i', param:'i',
+  base:null, style:null, script:null, frameset:null
+};
+
+const VOID       = new Set('area base br col hr img input link meta param'.split(' '));
+const OPT_END    = new Set('body colgroup dd dt head html li option p tbody td tfoot th thead tr'.split(' '));
+const UNIQUE     = new Set(['html','head','body','title','base']);
+const HEAD_ONLY  = new Set(['title','base','meta','link','style']);
+const HEAD_OK    = new Set(['title','base','meta','link','style','script','noscript','basefont']);
+const BLOCK      = new Set('address blockquote center dir div dl fieldset form h1 h2 h3 h4 h5 h6 hr menu noframes ol p pre table ul'.split(' '));
+const HTML5_TAGS = new Set('article aside audio bdi canvas data datalist details dialog embed figcaption figure footer header hgroup main mark menuitem meter nav output picture progress rb rp rt rtc ruby section slot source summary template time track video wbr'.split(' '));
+const NONSTD     = new Set(['marquee','nobr','blink','bgsound','spacer']);
+const RAW_SCAN   = new Set(['script','style','textarea','title']);
+const BOOLEANS  = new Set('checked disabled selected readonly multiple nowrap noshade ismap nohref defer compact declare noresize'.split(' '));
+
+/* <child> must sit directly inside one of these parents (nearest open element) */
+const NEEDS_PARENT = {
+  td:['tr'], th:['tr'],
+  tr:['table','thead','tbody','tfoot'],
+  caption:['table'], col:['table'], colgroup:['table'],
+  thead:['table'], tbody:['table'], tfoot:['table'],
+  li:['ul','ol','menu','dir'], dt:['dl'], dd:['dl'],
+  option:['select','optgroup'], optgroup:['select'],
+  area:['map'], param:['object','applet'], legend:['fieldset'],
+  frame:['frameset'], noframes:['frameset','body']
+};
+/* an open element with an optional end tag closes implicitly when a sibling opens */
+const CLOSES_ON = {
+  li:['li'], dt:['dt','dd'], dd:['dt','dd'], p:[...BLOCK],
+  option:['option','optgroup'], optgroup:['optgroup'],
+  tr:['tr','tbody','thead','tfoot'],
+  td:['td','th','tr','tbody','thead','tfoot'], th:['td','th','tr','tbody','thead','tfoot'],
+  colgroup:['colgroup','thead','tbody','tfoot','tr'],
+  thead:['tbody','tfoot'], tbody:['tbody','tfoot']
+};
+/* text is only allowed inside these via specific children */
+const TEXT_PARENTS = {
+  table:'table rows — put the text inside a <td>', tr:'table cells — wrap it in <td>…</td>',
+  ul:'list items — wrap it in <li>…</li>', ol:'list items — wrap it in <li>…</li>',
+  dl:'terms — wrap it in <dt>…</dt>', select:'options — wrap it in <option>…</option>',
+  colgroup:'columns', thead:'table rows', tbody:'table rows', tfoot:'table rows',
+  menu:'list items', dir:'list items', optgroup:'options'
+};
+
+/* typed attribute values: tag|attr -> rule */
+const TYPED = {};
+(function buildTyped(){
+  const put = (tags, attrs, rule) => tags.split(' ').forEach(t =>
+    attrs.split(' ').forEach(a => { TYPED[t + '|' + a] = rule; }));
+  const ialign = {kw:'top middle bottom left right'};
+  const calign = {kw:'left center right'};
+  const lalign = {kw:'left center right justify'};
+  const talign = {kw:'left center right justify char'};
+  put('img input', 'align', ialign);
+  put('table hr', 'align', calign);
+  put('caption legend', 'align', {kw:'top bottom left right'});
+  put('p h1 h2 h3 h4 h5 h6', 'align', lalign);
+  put('tr td th col colgroup thead tbody tfoot', 'align', talign);
+  put('tr td th col colgroup thead tbody tfoot', 'valign', {kw:'top middle bottom baseline'});
+  put('td th', 'colspan', {int:1}); put('td th', 'rowspan', {int:1});
+  put('col colgroup', 'span', {int:1});
+  put('table', 'border', {num:0});
+  put('table', 'cellpadding cellspacing', {numpct:1});
+  put('img td th table hr iframe object', 'width height', {numpct:1});
+  put('img', 'border hspace vspace', {num:0});
+  put('hr', 'size', {num:0});
+  put('ol', 'start', {int:1}); put('li', 'value', {int:1});
+  put('input select textarea button', 'size', {num:0});
+  put('input', 'maxlength', {num:0});
+  put('textarea', 'rows cols', {num:0});
+  put('a area input object button select textarea', 'tabindex', {num:0});
+  put('pre', 'width', {num:0});
+  put('font', 'size', {fsize:1});
+  put('form', 'method', {kw:'get post'});
+  put('input', 'type', {kw:'text password checkbox radio submit reset file hidden image button'});
+  put('button', 'type', {kw:'button submit reset'});
+})();
+
+const ENTITIES = new Set(('amp lt gt quot apos nbsp copy reg trade deg plusmn sup1 sup2 sup3 frac12 frac14 frac34 ' +
+  'times divide middot para sect bull hellip mdash ndash lsquo rsquo ldquo rdquo laquo raquo lsaquo rsaquo ' +
+  'dagger Dagger permil euro pound yen cent curren ensp emsp thinsp zwnj zwj lrm rlm ' +
+  'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega ' +
+  'larr rarr uarr darr harr crarr forall part exist empty nabla isin notin ni prod sum minus lowast radic prop infin ' +
+  'and or cap cup int there4 sim cong asymp ne equiv le ge oline frasl weierp image real alefsym sdot').split(' '));
+
+const ALL_TAGS = Object.keys(ELEMENTS).concat([...HTML5_TAGS]);
+
+/* ============================================================
+   CSS DATA — properties and value specs (HTML4-era CSS2.1 plus
+   the few CSS3 additions students inevitably meet online)
+   ============================================================ */
+const MACROS = {
+  MW:  '( LP | !auto )',
+  LW:  '( !thin | !medium | !thick | L )',
+  BS:  '( !none | !hidden | !dotted | !dashed | !solid | !double | !groove | !ridge | !inset | !outset )',
+  OVF: '( !visible | !hidden | !scroll | !auto | !clip )',
+  BGPOS:'( LP | !left | !center | !right | !top | !bottom ){1,2}',
+  VA:  '( !baseline | !sub | !super | !top | !text-top | !middle | !bottom | !text-bottom | LP )',
+  FS:  '( !xx-small | !x-small | !small | !medium | !large | !x-large | !xx-large | !larger | !smaller | LP )',
+  FW:  '( !normal | !bold | !bolder | !lighter | FWNUM )'
+};
+const PROPS = {
+  'color':'C', 'opacity':'N01',
+  'background':'bg', 'background-color':'C', 'background-image':'( !none | U | grad )',
+  'background-repeat':'( !repeat | !repeat-x | !repeat-y | !no-repeat | !round | !space ){1,2}',
+  'background-attachment':'( !scroll | !fixed | !local )',
+  'background-position':'BGPOS', 'background-size':'( LP | !auto | !cover | !contain ){1,2}',
+  'background-clip':'( !border-box | !padding-box | !content-box ){1,2}',
+  'background-origin':'( !border-box | !padding-box | !content-box ){1,2}',
+  'border':'LW || BS || C',
+  'border-top':'LW || BS || C', 'border-right':'LW || BS || C',
+  'border-bottom':'LW || BS || C', 'border-left':'LW || BS || C',
+  'border-width':'LW{1,4}', 'border-style':'BS{1,4}', 'border-color':'C{1,4}',
+  'border-radius':'LP{1,4} [/ LP{1,4}]',
+  'border-top-left-radius':'LP{1,2}', 'border-top-right-radius':'LP{1,2}',
+  'border-bottom-left-radius':'LP{1,2}', 'border-bottom-right-radius':'LP{1,2}',
+  'border-collapse':'( !collapse | !separate )', 'border-spacing':'LP{1,2}',
+  'border-image':'any',
+  'margin':'MW{1,4}', 'margin-top':'MW', 'margin-right':'MW', 'margin-bottom':'MW', 'margin-left':'MW',
+  'padding':'LP{1,4}', 'padding-top':'LP', 'padding-right':'LP', 'padding-bottom':'LP', 'padding-left':'LP',
+  'width':'( LP | !auto | !min-content | !max-content | !fit-content )',
+  'height':'( LP | !auto | !min-content | !max-content | !fit-content )',
+  'min-width':'( LP | !min-content | !max-content | !fit-content )',
+  'min-height':'( LP | !min-content | !max-content | !fit-content )',
+  'max-width':'( LP | !none | !min-content | !max-content | !fit-content )',
+  'max-height':'( LP | !none | !min-content | !max-content | !fit-content )',
+  'box-sizing':'( !content-box | !border-box )',
+  'display':'( !none | !inline | !block | !inline-block | !list-item | !run-in | !compact | !table | !inline-table | !table-row-group | !table-header-group | !table-footer-group | !table-row | !table-column-group | !table-column | !table-cell | !table-caption | !flex | !inline-flex | !grid | !inline-grid | !contents )',
+  'position':'( !static | !relative | !absolute | !fixed | !sticky )',
+  'top':'( !auto | LP )', 'right':'( !auto | LP )', 'bottom':'( !auto | LP )', 'left':'( !auto | LP )',
+  'float':'( !left | !right | !none | !inline-start | !inline-end )',
+  'clear':'( !none | !left | !right | !both | !inline-start | !inline-end )',
+  'z-index':'( !auto | I )', 'visibility':'( !visible | !hidden | !collapse )',
+  'overflow':'OVF{1,2}', 'overflow-x':'OVF', 'overflow-y':'OVF',
+  'font':'font', 'font-family':'fam', 'font-size':'FS', 'font-weight':'FW',
+  'font-style':'( !normal | !italic | !oblique )', 'font-variant':'( !normal | !small-caps )',
+  'font-stretch':'( !normal | !wider | !narrower | !ultra-condensed | !extra-condensed | !condensed | !semi-condensed | !semi-expanded | !expanded | !extra-expanded | !ultra-expanded )',
+  'line-height':'( !normal | N | LP )',
+  'letter-spacing':'( !normal | L )', 'word-spacing':'( !normal | LP )',
+  'text-align':'( !left | !right | !center | !justify | !start | !end )',
+  'text-decoration':'( !none | !underline | !overline | !line-through | !blink | !wavy | !dotted | !dashed | !double | !solid | C ){1,5}',
+  'text-indent':'LP', 'text-transform':'( !none | !capitalize | !uppercase | !lowercase )',
+  'text-shadow':'shadows', 'white-space':'( !normal | !pre | !nowrap | !pre-wrap | !break-spaces | !pre-line )',
+  'vertical-align':'VA', 'direction':'( !ltr | !rtl )',
+  'unicode-bidi':'( !normal | !embed | !bidi-override )',
+  'word-break':'( !normal | !break-all | !keep-all | !break-word )',
+  'overflow-wrap':'( !normal | !anywhere | !break-word )',
+  'text-overflow':'( !clip | !ellipsis )', 'tab-size':'( I | LP )', 'hyphens':'( !none | !manual | !auto )',
+  'list-style':'lst', 'list-style-type':'LST', 'list-style-position':'( !inside | !outside )',
+  'list-style-image':'( !none | U )',
+  'table-layout':'( !auto | !fixed )', 'empty-cells':'( !show | !hide )',
+  'caption-side':'( !top | !bottom )',
+  'box-shadow':'shadows',
+  'outline':'( LW || ( BS | !auto ) || ( C | !invert ) )', 'outline-width':'LW',
+  'outline-style':'( BS | !auto )', 'outline-color':'( C | !invert )', 'outline-offset':'LP',
+  'cursor':'cur', 'filter':'any', 'backdrop-filter':'any', 'mix-blend-mode':'any',
+  'will-change':'any', 'appearance':'any', 'user-select':'any', 'aspect-ratio':'any',
+  'resize':'( !none | !both | !horizontal | !vertical | !block | !inline )',
+  'accent-color':'C', 'scroll-behavior':'( !auto | !smooth )',
+  'transform':'tfns', 'transform-origin':'( LP | !left | !center | !right | !top | !bottom ){1,3}',
+  'transform-style':'any', 'perspective':'any', 'perspective-origin':'any',
+  'backface-visibility':'( !visible | !hidden )',
+  'transition':'trans', 'transition-property':'( !all | !none | id ){1,}',
+  'transition-duration':'T{1,}', 'transition-delay':'T{1,}', 'transition-timing-function':'TF{1,}',
+  'flex':'flexv', 'flex-grow':'N', 'flex-shrink':'N', 'flex-basis':'( LP | !auto | !content )',
+  'flex-direction':'( !row | !row-reverse | !column | !column-reverse )',
+  'flex-wrap':'( !nowrap | !wrap | !wrap-reverse )', 'flex-flow':'any',
+  'justify-content':'( !flex-start | !flex-end | !center | !space-between | !space-around | !space-evenly | !start | !end | !stretch )',
+  'justify-items':'any', 'justify-self':'any',
+  'align-items':'( !stretch | !flex-start | !flex-end | !center | !baseline | !start | !end )',
+  'align-self':'( !auto | !stretch | !flex-start | !flex-end | !center | !baseline | !start | !end )',
+  'align-content':'( !stretch | !flex-start | !flex-end | !center | !space-between | !space-around | !space-evenly | !start | !end )',
+  'place-items':'any', 'place-content':'any', 'place-self':'any',
+  'order':'I', 'gap':'LP{1,2}', 'row-gap':'LP', 'column-gap':'( LP | !normal )',
+  'grid':'any', 'grid-template':'any', 'grid-template-columns':'any', 'grid-template-rows':'any',
+  'grid-template-areas':'any', 'grid-area':'any', 'grid-column':'any', 'grid-row':'any',
+  'grid-column-start':'any', 'grid-column-end':'any', 'grid-row-start':'any', 'grid-row-end':'any',
+  'grid-auto-flow':'any', 'grid-auto-rows':'any', 'grid-auto-columns':'any',
+  'columns':'any', 'column-count':'( !auto | I )', 'column-width':'( !auto | LP )',
+  'column-rule':'( LW || BS || C )', 'column-rule-color':'C', 'column-rule-style':'BS', 'column-rule-width':'LW',
+  'column-span':'( !none | !all )', 'column-fill':'( !auto | !balance )',
+  'page-break-before':'( !auto | !always | !avoid | !left | !right )',
+  'page-break-after':'( !auto | !always | !avoid | !left | !right )',
+  'page-break-inside':'( !auto | !avoid )', 'orphans':'I', 'widows':'I',
+  'quotes':'any', 'content':'any', 'counter-increment':'any', 'counter-reset':'any',
+  'zoom':'any', 'clip':'any',
+  'object-fit':'( !fill | !contain | !cover | !none | !scale-down )',
+  'object-position':'( LP | !left | !center | !right | !top | !bottom ){1,2}',
+  'pointer-events':'any', 'image-rendering':'any', 'box-decoration-break':'any'
+};
+const PROP_NAMES = Object.keys(PROPS);
+
+const UNITS = new Set('px em ex ch rem vw vh vmin vmax pt pc in cm mm q'.split(' '));
+const COLORS = new Set(('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood ' +
+  'cadetblue chartreuse chocolate coral cornflowerblue crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey ' +
+  'darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray ' +
+  'darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen ' +
+  'fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow honeydew hotpink indianred indigo ivory khaki lavender ' +
+  'lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey ' +
+  'lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen ' +
+  'linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen ' +
+  'mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange ' +
+  'orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple ' +
+  'rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue ' +
+  'slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow ' +
+  'yellowgreen transparent currentcolor').split(' '));
+const LST_TYPES = new Set('disc circle square decimal decimal-leading-zero lower-roman upper-roman lower-alpha upper-alpha lower-greek lower-latin upper-latin armenian georgian none cjk-ideographic disclose-close disclose-open'.split(' '));
+const CURSORS = new Set('auto default none context-menu help pointer progress wait cell crosshair text vertical-text alias copy move no-drop not-allowed e-resize n-resize ne-resize nw-resize s-resize se-resize sw-resize w-resize ew-resize ns-resize nesw-resize nwse-resize col-resize row-resize all-scroll zoom-in zoom-out grab grabbing'.split(' '));
+const TFNS = new Set('matrix matrix3d translate translate3d translatex translatey translatez scale scale3d scalex scaley rotate rotate3d rotatex rotatey rotatez skew skewx skewy perspective'.split(' '));
+const TF_KEYWORDS = new Set('ease linear ease-in ease-out ease-in-out step-start step-end'.split(' '));
+const BG_REPEAT = new Set('repeat repeat-x repeat-y no-repeat round space'.split(' '));
+const BG_ATTACH = new Set('scroll fixed local'.split(' '));
+const BG_POSKW  = new Set('left center right top bottom'.split(' '));
+
+/* ============================================================
+   MISC STATE
+   ============================================================ */
+const ta = $('#code'), hl = $('#hl'), gutterIn = $('#gutter-in'), gutterEl = $('#gutter');
+const pv = $('#pv'), pvNote = $('#pv-note'), panel = $('#panel'), panelToggle = $('#panel-toggle');
+const countsEl = $('#counts'), listEl = $('#err-list');
+const detailEl = $('#err-detail'), posEl = $('#pos'), hintEl = $('#hint');
+const LH = 22, PADT = 8, PADL = 12;
+let src = '', lines = [0], charW = 8.4;
+let tokens = [], tags = [], raws = [];
+let errors = [];               /* {sev,s,e,code,title,msg,fix,line,col} */
+let pieces = [];               /* non-overlapping render ranges {s,e,sev,id} */
+let activeErr = null, pinnedErr = null, runTimer = null;
+
+/* ============================================================
+   LINE INDEX
+   ============================================================ */
+function buildLines(s){
+  const arr = [0];
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) arr.push(i + 1);
+  return arr;
+}
+function lineIdx(off){          /* index of the line containing off */
+  let lo = 0, hi = lines.length - 1;
+  while (lo < hi){ const m = (lo + hi + 1) >> 1; if (lines[m] <= off) lo = m; else hi = m - 1; }
+  return lo;
+}
+function lineCol(off){
+  const li = lineIdx(off);
+  return { line: li + 1, col: off - lines[li] + 1 };
+}
+
+/* ============================================================
+   HTML TOKENIZER — produces positioned tokens, tag records and
+   raw-text (script/style/…) ranges for the validators.
+   ============================================================ */
+function tokenizeHtml(source){
+  const T = [], tagRecs = [], rawRanges = [];
+  const n = source.length;
+  let pos = 0, txStart = 0;
+  const pushT = (cls, s, e) => { if (e > s) T.push({cls, s, e}); };
+  const reName  = /<[a-zA-Z][a-zA-Z0-9]*/y;
+  const reEnd   = /<\/\s*([a-zA-Z][a-zA-Z0-9]*)\s*([^>]*)>/y;
+
+  while (pos < n){
+    const lt = source.indexOf('<', pos);
+    if (lt < 0) break;
+
+    if (source.startsWith('<!--', lt)){
+      if (lt > txStart) pushT('tx', txStart, lt);
+      const end = source.indexOf('-->', lt + 4);
+      if (end < 0){
+        pushT('cm', lt, n);
+        tagRecs.push({kind:'comment-unterm', s:lt, e:n});
+        pos = n; txStart = n; break;
+      }
+      pushT('cm', lt, end + 3);
+      pos = end + 3; txStart = pos; continue;
+    }
+    if (source.startsWith('<!', lt)){
+      if (lt > txStart) pushT('tx', txStart, lt);
+      let end = source.indexOf('>', lt + 2); end = end < 0 ? n : end + 1;
+      pushT('dt', lt, end);
+      tagRecs.push({kind:'doctype', s:lt, e:end, text:source.slice(lt, end)});
+      pos = end; txStart = pos; continue;
+    }
+
+    reEnd.lastIndex = lt;
+    const em = reEnd.exec(source);
+    if (em && em.index === lt){
+      if (lt > txStart) pushT('tx', txStart, lt);
+      const end = reEnd.lastIndex;
+      const nameS = lt + 2 + (source.slice(lt + 2).length - source.slice(lt + 2).trimStart().length);
+      pushT('p', lt, nameS);
+      pushT('name', nameS, nameS + em[1].length);
+      const junk = em[2].trim();
+      if (junk) tagRecs.push({kind:'end-attrs', s:lt, e:end, name:em[1].toLowerCase(), junk});
+      const closeS = end - 1;
+      pushT('p', Math.max(nameS + em[1].length, closeS - (source[end-2] === '/' ? 1 : 0)), end);
+      tagRecs.push({kind:'end', s:lt, e:end, name:em[1].toLowerCase(), nameS, nameE:nameS + em[1].length});
+      pos = end; txStart = pos; continue;
+    }
+
+    reName.lastIndex = lt;
+    const sm = reName.exec(source);
+    if (!sm || sm.index !== lt){ pos = lt + 1; continue; }   /* literal '<' in text */
+
+    if (lt > txStart) pushT('tx', txStart, lt);
+    const name = sm[0].slice(1).toLowerCase();
+    const nameS = lt + 1, nameE = lt + sm[0].length;
+    pushT('p', lt, nameS);
+    pushT('name', nameS, nameE);
+
+    /* attributes */
+    let j = nameE, gt = n, selfClose = false;
+    const ats = [];
+    while (j < n){
+      while (j < n && /\s/.test(source[j])) j++;
+      if (j >= n){ gt = n; break; }
+      if (source[j] === '>'){ gt = j + 1; break; }
+      if (source[j] === '/'){
+        if (source[j+1] === '>'){ selfClose = true; gt = j + 2; break; }
+        j++; continue;
+      }
+      const aS = j;
+      while (j < n && !/[\s=>]/.test(source[j])) j++;
+      const rawName = source.slice(aS, j);
+      if (!rawName){ j++; continue; }
+      const a = {name:rawName.toLowerCase(), raw:rawName, nS:aS, nE:aS + rawName.length,
+                 hasEq:false, val:null, vS:-1, vE:-1, quoted:false, qClosed:false};
+      let k = j;
+      while (k < n && /\s/.test(source[k])) k++;
+      if (source[k] === '='){
+        a.hasEq = true; k++;
+        while (k < n && /\s/.test(source[k])) k++;
+        if (source[k] === '>' || k >= n){ a.val = ''; a.vS = a.vE = k; j = k; }
+        else if (source[k] === '"' || source[k] === "'"){
+          const q = source[k];
+          a.quoted = true; a.vS = k + 1;
+          const ve = source.indexOf(q, a.vS);
+          if (ve < 0){
+            /* recover: the browser swallows the rest of the file; we stop at the tag end */
+            let stop = source.indexOf('>', a.vS); if (stop < 0) stop = n;
+            a.vE = stop; a.qClosed = false; j = stop; k = stop;
+          } else { a.vE = ve; a.qClosed = true; k = ve + 1; j = k; }
+        } else {
+          a.vS = k;
+          while (k < n && !/[\s>]/.test(source[k])) k++;
+          a.vE = k; a.val = source.slice(a.vS, a.vE); j = k;
+        }
+        if (a.val === null) a.val = source.slice(a.vS, a.vE);
+      }
+      ats.push(a);
+      pushT('an', a.nS, a.nE);
+      if (a.hasEq && a.vE >= a.vS && a.vS >= 0)
+        pushT('av', a.quoted ? a.vS - 1 : a.vS, a.quoted ? a.vE + (a.qClosed ? 1 : 0) : a.vE);
+    }
+    if (gt < 0) gt = n;
+    let lastE = nameE;
+    for (const a of ats) lastE = Math.max(lastE, a.quoted && a.qClosed ? a.vE + 1 : (a.hasEq ? a.vE : a.nE));
+    if (lastE <= gt) pushT('p', lastE, gt);
+    tagRecs.push({kind:'start', s:lt, e:gt, name, nameS, nameE, ats, selfClose});
+    pos = gt; txStart = pos;
+
+    /* raw text elements: content until the matching close tag */
+    if (RAW_SCAN.has(name)){
+      const closeRe = new RegExp('</' + name + '\\s*>', 'i');
+      closeRe.lastIndex = 0;
+      const cm = closeRe.exec(source.slice(gt));
+      if (cm){
+        const cEnd = gt + cm.index;
+        rawRanges.push({name, s:gt, e:cEnd});
+        if (cEnd > gt) pushT(name === 'style' ? 'css' : 'raw', gt, cEnd);
+        pos = cEnd; txStart = cEnd;   /* the close tag itself is handled on the next scan */
+      } else if (name === 'title'){
+        /* browsers treat the rest of the file as the title (invisible!);
+           for linting we keep reading it as normal markup so later errors surface */
+        tagRecs.push({kind:'raw-unterm', s:lt, e:gt, name, recovered:true});
+      } else {
+        rawRanges.push({name, s:gt, e:n});
+        if (n > gt) pushT(name === 'style' ? 'css' : 'raw', gt, n);
+        tagRecs.push({kind:'raw-unterm', s:lt, e:n, name, recovered:false});
+        txStart = n; break;
+      }
+    }
+  }
+  if (txStart < n) pushT('tx', txStart, n);
+  return {tokens:T, tags:tagRecs, raws:rawRanges};
+}
+
+/* ============================================================
+   HTML VALIDATOR
+   ============================================================ */
+const attrCache = new Map();
+function allowedAttrs(name){
+  if (attrCache.has(name)) return attrCache.get(name);
+  const set = new Set();
+  const def = ELEMENTS[name];
+  (def || '').split(/\s+/).filter(Boolean).forEach(a => set.add(a));
+  const g = def !== undefined ? (GLOBALS[name] !== undefined ? GLOBALS[name] : 'cie') : 'cie';
+  if (g){ if (g.includes('c')) CORE.split(' ').forEach(a => set.add(a));
+          if (g.includes('i')) I18N.split(' ').forEach(a => set.add(a));
+          if (g.includes('e')) EVENTS.split(' ').forEach(a => set.add(a)); }
+  attrCache.set(name, set);
+  return set;
+}
+
+function validateHtml(add){
+  const stack = [];                 /* {name,s,nameS,nameE} */
+  const seen = {html:0, head:0, body:0, title:0, base:0};
+  let doctypeSeen = false;
+  const styleDecls = [];            /* inline style="" to CSS-check later */
+  const headOpen = () => stack.some(e => e.name === 'head');
+  const bodyOpen = () => stack.some(e => e.name === 'body');
+  const openTitles = () => stack.filter(e => e.name === 'title');
+
+  /* ---- walk everything in document order ---- */
+  const events = tags.slice();
+  for (const t of tokens) if (t.cls === 'tx') events.push({kind:'text', s:t.s, e:t.e});
+  events.sort((a, b) => a.s - b.s);
+  for (const ev of events){
+    if (ev.kind === 'text'){ onText(ev); continue; }
+    const tag = ev;
+    if (tag.kind === 'doctype'){
+      doctypeSeen = true;
+      if (!/^<!\s*doctype\s+html\s*>$/i.test(tag.text))
+        add('warn', tag.s, tag.e, 'bad-doctype', 'Unusual doctype',
+            'The doctype should read exactly <!doctype html>. Everything else sends the browser into "quirks mode" — an old, inconsistent set of layout rules.',
+            'Write <!doctype html> as the very first line.');
+      continue;
+    }
+    if (tag.kind === 'comment-unterm'){
+      add('err', tag.s, tag.e, 'unterminated-comment', 'Comment never closed',
+          'This comment starts with <!-- but never reaches -->. The browser treats the whole rest of the page as one long comment, so everything after this line disappears.',
+          'Add --> where the comment should end.');
+      continue;
+    }
+    if (tag.kind === 'raw-unterm'){
+      const what = '<' + tag.name + '>';
+      add('err', tag.s, tag.e, 'raw-unterm', 'Missing </' + tag.name + '>',
+          tag.recovered
+            ? 'The ' + what + ' opened here is never closed, so the browser treats everything after this line as the page title — none of it shows on the page.'
+            : 'The ' + what + ' opened here is never closed, so the browser treats the whole rest of the file as its content.',
+          'Add </' + tag.name + '> where the ' + what + ' element should end.');
+      if (tag.recovered){
+        for (let i = stack.length - 1; i >= 0; i--)
+          if (stack[i].name === tag.name){ stack[i].reported = true; break; }
+      }
+      continue;
+    }
+    if (tag.kind === 'end-attrs'){
+      add('warn', tag.s, tag.e, 'attrs-in-endtag', 'Closing tags can\'t have attributes',
+          '</' + tag.name + '> carries "' + trunc(tag.junk, 30) + '" — attributes in a closing tag are simply ignored.',
+          'Remove the extra text after the tag name.');
+      continue;
+    }
+    if (tag.kind === 'end'){
+      onCloseTag(tag);
+      continue;
+    }
+    /* ---- start tag ---- */
+    onOpenTag(tag);
+  }
+
+  function onText(t){
+    const text = src.slice(t.s, t.e);
+    scanEntities(text, t.s, add);
+    if (!text.trim()) return;
+    const top = stack[stack.length - 1];
+    if (headOpen() && !bodyOpen() && (!top || top.name === 'head')){
+      add('warn', t.s, Math.min(t.e, t.s + 40), 'text-in-head', 'Content inside <head>',
+          'Visible text can\'t live in <head> — the browser will move it down into <body> when it renders, which is rarely where you wanted it.',
+          'Move this content below <body>.');
+    }
+    if (top && TEXT_PARENTS[top.name])
+      add('warn', t.s, Math.min(t.e, t.s + 40), 'text-in-' + top.name, 'Text inside <' + top.name + '>',
+          '<' + top.name + '> only accepts specific child elements; ' + TEXT_PARENTS[top.name] + '. Browsers pull stray text out, so it can appear somewhere unexpected.',
+          'Wrap the text in the proper child element.');
+  }
+
+  function classify(name, tag){
+    if (ELEMENTS[name] !== undefined) return;
+    if (NONSTD.has(name))
+      add('err', tag.s, tag.e, 'nonstd-tag', '<' + name + '> isn\'t a standard tag',
+          '<' + name + '> was never part of any HTML standard. Some browsers support it, others silently ignore it and show plain text.',
+          'Use CSS instead (e.g. style="font-weight:bold" or an animation).');
+    else if (HTML5_TAGS.has(name))
+      add('warn', tag.s, tag.e, 'html5-tag', '<' + name + '> is an HTML5 tag',
+          '<' + name + '> isn\'t part of HTML 4 — browsers render it fine, but it\'s outside this course\'s scope.',
+          'Use <div> with a class instead.');
+    else {
+      const sug = suggest(name, ALL_TAGS);
+      add('err', tag.s, tag.e, 'unknown-tag', '<' + name + '> is not an HTML tag',
+          'Browsers don\'t know <' + name + '>, so they quietly render its text without any element — no error, just a subtly wrong page.' +
+          (sug ? ' Did you mean <' + sug + '>?' : ''),
+          sug ? 'Replace it with <' + sug + '>.' : 'Check the spelling against the element list.');
+    }
+  }
+
+  function onOpenTag(tag){
+    const name = tag.name;
+    classify(name, tag);
+
+    /* singleton elements */
+    if (UNIQUE.has(name)){
+      seen[name]++;
+      if (seen[name] > 1){
+        const extra = name === 'body' ? ' The browser merges this one into the first <body>, which is probably not what you intended.'
+                    : ' The browser ignores the second one.';
+        add('err', tag.s, tag.e, 'dup-' + name, 'Only one <' + name + '> is allowed',
+            'A page contains exactly one <' + name + '> element, but this is #' + seen[name] + '.' + extra,
+            'Delete the extra <' + name + '> (and its </' + name + '>).');
+      }
+    }
+
+    const inHead = headOpen(), inBody = bodyOpen();
+    if (inHead && !inBody && !UNIQUE.has(name) && !HEAD_OK.has(name)){
+      add('warn', tag.s, tag.e, 'head-content', '<' + name + '> inside <head>',
+          'Only metadata (title, meta, link, style…) belongs in <head>. The browser silently moves this <' + name + '> into <body> when rendering, which can reorder your page.',
+          'Move it below <body>.');
+    }
+    if (inBody && HEAD_ONLY.has(name) && !openTitles().length)
+      add('info', tag.s, tag.e, 'body-head-el', '<' + name + '> in the body',
+          'HTML 4 says <' + name + '> belongs in <head>. The browser applies it anyway, but keep it in <head> to stay standard.',
+          'Move it inside <head>.');
+
+    /* implicit closes: <li>a<li>b  /  <p>a<p>b  … (p is left to the
+       block-in-p warning instead — that phrasing teaches more) */
+    while (stack.length){
+      const top = stack[stack.length - 1];
+      const closes = CLOSES_ON[top.name];
+      if (!closes || !closes.includes(name)) break;
+      if (top.name === 'p' && name !== 'p') break;   /* block-in-p warning handles this */
+      stack.pop();
+      add('info', top.s, top.e, 'implicit-close', '<' + top.name + '> closed automatically',
+          'This <' + top.name + '> ends here because the next <' + name + '> started — HTML 4 lets you omit </' + top.name + '>.',
+          'Adding </' + top.name + '> makes the structure easier to read.');
+    }
+
+    /* hierarchy: parent constraints */
+    const need = NEEDS_PARENT[name];
+    if (need){
+      const top = stack.length ? stack[stack.length - 1].name : null;
+      if (!top || !need.includes(top)){
+        const parents = need.map(p => '<' + p + '>').join(' or ');
+        const where = top ? 'is directly inside <' + top + '> here'
+                          : 'is at the very top level of the document here';
+        const note = (name === 'td' || name === 'th')
+          ? ' Browsers invent an anonymous row and shuffle the cells into it, so your table can come out misshapen.'
+          : (name === 'li' ? ' Browsers quietly pull the item out, or wrap it in a structure you didn\'t ask for.' : '');
+        add('err', tag.s, tag.e, 'bad-parent', '<' + name + '> must sit inside ' + parents,
+            '<' + name + '> ' + where + '.' + note,
+            'Wrap it in ' + parents + ' first.');
+      }
+    }
+    /* block element inside a paragraph */
+    if (stack.length && stack[stack.length - 1].name === 'p' && BLOCK.has(name))
+      add('warn', tag.s, tag.e, 'block-in-p', '<' + name + '> inside a paragraph',
+          'A <p> may only contain text and inline elements. The browser closes the paragraph on its own the moment it sees <' + name + '>, splitting your text in two.',
+          'Close the <p> before <' + name + '>, or replace the <p> with a <div>.');
+    /* nested forms */
+    if (name === 'form' && stack.some(e => e.name === 'form'))
+      add('err', tag.s, tag.e, 'form-nest', 'Forms can\'t nest',
+          'This <form> opens inside another <form>. HTML forbids nested forms; the browser drops the inner one and its controls may stop submitting.',
+          'Use one <form>, or two separate forms that don\'t overlap.');
+
+    /* void element notes */
+    if (VOID.has(name)){
+      if (tag.selfClose)
+        add('info', tag.s, tag.e, 'self-close', 'The "/" in <' + name + '/> is ignored',
+            'HTML is not XHTML: <' + name + '> is a void element with no closing tag, and the trailing slash does nothing.',
+            'Write <' + name + '> on its own.');
+    } else {
+      stack.push({name, s:tag.s, e:tag.e, nameS:tag.nameS, nameE:tag.nameE});
+    }
+
+    checkAttrs(tag, styleDecls);
+  }
+
+  function onCloseTag(tag){
+    const name = tag.name;
+    if (VOID.has(name)){
+      add('err', tag.s, tag.e, 'void-close', '</' + name + '> — void elements have no closing tag',
+          '<' + name + '> is a void element: it has no content, so there is nothing to close. The browser ignores </' + name + '>.',
+          'Delete </' + name + '>.');
+      return;
+    }
+    if (UNIQUE.has(name) && name !== 'html' && !stack.some(e => e.name === name) && !OPT_END.has(name)){
+      add('err', tag.s, tag.e, 'stray-close', '</' + name + '> has no matching opening tag',
+          'There is no open <' + name + '> to close.',
+          'Delete </' + name + '>, or add the opening tag.');
+      return;
+    }
+    let idx = -1;
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i].name === name){ idx = i; break; }
+    if (idx < 0){
+      add('err', tag.s, tag.e, 'stray-close', '</' + name + '> closes nothing',
+          'No <' + name + '> element is open at this point — it was already closed, or never opened.',
+          'Delete </' + name + '> or move it inside the element it should close.');
+      return;
+    }
+    /* anything still open above idx is either implicitly closed (optional
+       end tag) or wrongly nested / never closed */
+    const inner = stack.slice(idx + 1);
+    for (const e of inner){
+      if (e.reported) continue;        /* already reported via raw-unterm */
+      if (OPT_END.has(e.name)) continue;   /* closed with its parent — normal HTML 4 */
+      add('err', e.s, e.e, 'missing-close', 'Missing </' + e.name + '>',
+          'The <' + e.name + '> opened here is still open when </' + name + '> closes <' + name + '> — the tags intersect. Everything you meant to have inside <' + e.name + '> ends early.',
+          'Add </' + e.name + '> before </' + name + '>.');
+      add('err', tag.s, tag.e, 'bad-nesting', '</' + name + '> crosses an open tag',
+          'This closes <' + name + '>, but <' + e.name + '> (opened at line ' + lineCol(e.s).line + ') opened after it and is still open. Tags must close in reverse order, like nested boxes.',
+          'Move </' + e.name + '> to before </' + name + '>.');
+    }
+    stack.length = idx;    /* pop idx and everything above it */
+  }
+
+  /* ---- attributes ---- */
+  function checkAttrs(tag, styleDecls){
+    const name = tag.name;
+    const allowed = allowedAttrs(name);
+    const perTag = new Set();
+    for (const a of tag.ats){
+      const an = a.name;
+      if (perTag.has(an))
+        add('warn', a.nS, a.nE, 'dup-attr', 'Duplicate attribute "' + an + '"',
+            '<' + name + '> sets ' + an + ' twice. Only the first value is used; the rest is ignored.',
+            'Delete one of them.');
+      perTag.add(an);
+
+      if (/^(data-|aria-)/.test(an)){
+        add('info', a.nS, a.nE, 'html5-attr', '"' + an + '" is an HTML5 attribute',
+            'Browsers accept it, but it doesn\'t exist in HTML 4 (this course\'s scope).',
+            null);
+        continue;
+      }
+      if (!allowed.has(an)){
+        const sug = suggest(an, [...allowed]);
+        let hint = '';
+        if (name === 'meta' && an === 'charset')
+          hint = ' In HTML 4 you declare the encoding with <meta http-equiv="Content-Type" content="text/html; charset=utf-8">.';
+        add('err', a.nS, a.nE, 'bad-attr', '"' + an + '" is not valid on <' + name + '>',
+            'The <' + name + '> element has no attribute called "' + an + '". The browser ignores it' +
+            (an === 'src' || an === 'href' ? ' — which for this attribute usually means the element does nothing at all.' : '.') + hint,
+            sug ? 'Did you mean ' + sug + '=?' : 'Check the spelling of the attribute.');
+        continue;
+      }
+      if (!a.hasEq && !BOOLEANS.has(an)){
+        add('warn', a.nS, a.nE, 'attr-novalue', '"' + an + '" has no value',
+            'This looks like a stray word, or a value that should sit inside quotes (e.g. ' + an + '="my photo"). The browser reads it as a separate (invalid) attribute.',
+            'Quote values that contain spaces.');
+      }
+      if (a.quoted && !a.qClosed){
+        add('err', a.vS - 1, a.vE, 'unclosed-quote', 'Attribute value is missing its closing quote',
+            'The value of ' + an + ' opens with a quote but never closes. The browser swallows everything up to the next quote character — often the rest of the page.',
+            'Add the closing ' + String.fromCharCode(34) + ' .');
+      }
+      /* typed values */
+      const rule = TYPED[name + '|' + an];
+      if (rule && a.hasEq && a.val){
+        checkTypedValue(name, an, rule, a, add);
+      }
+      if (an === 'style' && a.val) styleDecls.push({val:a.val, base:a.vS});
+      if (name === 'bdo' && an === 'dir' && a.val && !/^(ltr|rtl)$/i.test(a.val))
+        add('warn', a.vS, a.vE, 'bdo-dir', '<bdo> needs dir="ltr" or dir="rtl"',
+            'dir is the whole point of <bdo>; "' + a.val + '" isn\'t a valid direction.', 'Use ltr or rtl.');
+    }
+  }
+
+  /* ---- end of document ---- */
+  for (const e of stack){
+    if (!OPT_END.has(e.name) && !e.reported)
+      add('err', e.s, e.e, 'unclosed-eof', 'Missing </' + e.name + '>',
+          'The <' + e.name + '> opened here is never closed — the file ends first. Everything after it is treated as its content.',
+          'Add </' + e.name + '> where the element should end.');
+  }
+  if (!doctypeSeen && tags.some(t => t.kind === 'start'))
+    add('err', 0, 0, 'missing-doctype', 'Missing <!doctype html>',
+        'The document has no <!doctype html> on its first line, so the browser renders in "quirks mode" — a bag of old, inconsistent layout rules that quietly changes how your page looks.',
+        'Add <!doctype html> as the very first line.');
+  if (!seen.html && tags.some(t => t.kind === 'start'))
+    add('info', 0, 0, 'implied-root', 'No <html>, <head> or <body>',
+        'HTML 4 implies these elements: browsers create them around your content automatically. Writing them makes the structure explicit and easier to reason about.',
+        'Wrap the page in <html>, <head>…</head> and <body>…</body>.');
+
+  return styleDecls;
+}
+
+function checkTypedValue(name, an, rule, a, add){
+  const v = (a.val || '').trim().toLowerCase();
+  const rng = a.hasEq && a.quoted ? [a.vS, a.vE] : [a.vS, a.vE];
+  if (rule.kw){
+    const opts = rule.kw.split(' ');
+    if (!opts.includes(v)){
+      const sug = suggest(v, opts);
+      add('err', rng[0], rng[1], 'bad-attr-value', an + '="' + a.val + '" is not valid on <' + name + '>',
+          an + ' here must be one of: ' + opts.join(', ') + '.',
+          sug ? 'Did you mean "' + sug + '"?' : 'Use one of the listed values.');
+    }
+  } else if (rule.int){
+    if (!/^\d+$/.test(v) || parseInt(v, 10) < rule.int)
+      add('err', rng[0], rng[1], 'bad-attr-value', an + '="' + a.val + '" must be a whole number',
+          an + ' takes a positive integer (e.g. ' + an + '="2"). The browser falls back to 1 when the value makes no sense.',
+          null);
+  } else if (rule.num){
+    if (!/^\d+(\.\d+)?$/.test(v))
+      add('err', rng[0], rng[1], 'bad-attr-value', an + '="' + a.val + '" must be a number',
+          an + ' takes a plain number (pixels unless a unit is allowed).', null);
+  } else if (rule.numpct){
+    if (!/^\d+(\.\d+)?%?$/.test(v))
+      add('err', rng[0], rng[1], 'bad-attr-value', an + '="' + a.val + '" must be a number or percentage',
+          an + ' takes e.g. "100" (pixels) or "50%".', null);
+  } else if (rule.fsize){
+    if (!/^[+-]?\d$/.test(v))
+      add('err', rng[0], rng[1], 'bad-attr-value', 'size="' + a.val + '" is not valid',
+          'The font size attribute takes 1–7, optionally signed (e.g. size="5" or size="+1").', null);
+  }
+}
+
+function scanEntities(text, base, add){
+  let p = text.indexOf('&');
+  while (p >= 0){
+    const m = /^&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]{0,9})(;?)/.exec(text.slice(p, p + 14));
+    if (!m){
+      add('info', base + p, base + p + 1, 'bare-amp', "Stray '&'",
+          "A lone '&' starts a character reference. Browsers usually print it anyway, but '&amp;' is the correct way to show an ampersand.",
+          "Write &amp; instead of &.");
+    } else if (!m[2]){
+      add('info', base + p, base + p + m[0].length, 'entity-nosemi', "Character reference without ';'",
+          'HTML requires the semicolon: ' + m[0] + ';. Without it some browsers decode the reference and others print it literally.',
+          'Add ; right after the reference.');
+    } else if (m[1][0] !== '#' && !ENTITIES.has(m[1].toLowerCase())){
+      add('info', base + p, base + p + m[0].length, 'unknown-entity', '&' + m[1] + '; is not a known reference',
+          'Browsers print unknown references literally as text. The page then shows "&' + m[1] + ';" the way you typed it.',
+          'Check the spelling, or use a numeric reference.');
+    }
+    p = text.indexOf('&', p + 1);
+  }
+}
+
+/* ============================================================
+   CSS VALIDATOR
+   ============================================================ */
+function cssTokens(v){
+  const out = []; let i = 0; const n = v.length;
+  while (i < n){
+    const ch = v[i];
+    if (/\s/.test(ch)){ i++; continue; }
+    if (ch === ',' || ch === '/'){ out.push({raw:ch, s:i, e:i+1}); i++; continue; }
+    const s0 = i; let depth = 0;
+    while (i < n){
+      const c = v[i];
+      if (c === '(') depth++;
+      else if (c === ')'){ if (depth > 0) depth--; }
+      else if (depth === 0){
+        if (/\s/.test(c)) break;
+        if (c === ',' || c === '/') break;
+        if (c === '"' || c === "'"){ const q = c; const qe = v.indexOf(q, i + 1); i = qe < 0 ? n : qe + 1; continue; }
+      }
+      i++;
+    }
+    out.push({raw:v.slice(s0, i), s:s0, e:i});
+  }
+  return out;
+}
+function splitTopCommas(toks){
+  const groups = [[]];
+  for (const t of toks){
+    if (t.raw === ',') groups.push([]);
+    else groups[groups.length - 1].push(t);
+  }
+  return groups;
+}
+
+/* ---- spec grammar (CSS value descriptions) ---- */
+const specCache = new Map();
+function expandMacros(str){
+  let s = str;
+  for (let k = 0; k < 6; k++){
+    let changed = false;
+    for (const [m, ex] of Object.entries(MACROS)){
+      const re = new RegExp('\\b' + m + '\\b', 'g');
+      if (re.test(s)){ s = s.replace(re, ex); changed = true; }
+    }
+    if (!changed) break;
+  }
+  return s;
+}
+function parseSpec(str){
+  if (specCache.has(str)) return specCache.get(str);
+  const s = expandMacros(str);
+  let i = 0;
+  function ws(){ while (i < s.length && /\s/.test(s[i])) i++; }
+  function atom(){
+    ws();
+    const c = s[i];
+    if (c === '[' || c === '('){ i++; const node = alt(); ws(); if (s[i] === ']' || s[i] === ')') i++; return node; }
+    if (c === '/' || c === ','){ i++; return {k:'lit', ch:c}; }
+    let j = i;
+    while (j < s.length && /[\w!-]/.test(s[j])) j++;
+    const w = s.slice(i, j); i = j;
+    if (!w){ i++; return {k:'kw', w:'?'}; }   /* unknown punctuation: skip defensively */
+    if (w[0] === '!') return {k:'kw', w:w.slice(1).toLowerCase()};
+    return {k:'type', name:w};
+  }
+  function rep(){
+    let node = atom();
+    ws();
+    if (s[i] === '?'){ i++; node = {k:'opt', node}; }
+    else if (s[i] === '{'){
+      const m = /^\{(\d+)(?:,(\d*))?\}/.exec(s.slice(i));
+      if (m){ i += m[0].length;
+        node = {k:'rep', node, min:+m[1], max:(m[2] === undefined ? +m[1] : (m[2] === '' ? Infinity : +m[2]))};
+      }
+    }
+    return node;
+  }
+  function seq(){
+    const parts = [];
+    for (;;){
+      ws();
+      const before = i;
+      if (i >= s.length || s[i] === '|' || s[i] === ']' || s[i] === ')') break;
+      parts.push(rep());
+      if (i === before) { i++; continue; }   /* never loop without progress */
+    }
+    return parts.length === 1 ? parts[0] : {k:'seq', parts};
+  }
+  function any(){
+    let node = seq(); ws();
+    while (s[i] === '|' && s[i+1] === '|'){
+      i += 2;
+      const r = seq();
+      node = {k:'any', parts:[].concat(node.k === 'any' ? node.parts : [node], r.k === 'any' ? r.parts : [r])};
+      ws();
+    }
+    return node;
+  }
+  function alt(){
+    let node = any(); ws();
+    while (s[i] === '|' && s[i+1] !== '|'){
+      i++;
+      const r = any();
+      node = {k:'alt', parts:[node, r]};
+      ws();
+    }
+    return node;
+  }
+  const node = alt();
+  specCache.set(str, node);
+  return node;
+}
+
+function fail(st, idx, msg){ if (!st.best || idx > st.best.idx) st.best = {idx, msg}; }
+
+function matchNode(node, toks, idx, st){
+  switch (node.k){
+    case 'kw':{ const t = toks[idx]; if (t && t.raw.toLowerCase() === node.w) return idx + 1;
+      fail(st, idx, t ? "'" + t.raw + "' isn't right here — expected '" + node.w + "'" : 'the value ends early'); return null; }
+    case 'lit':{ const t = toks[idx]; if (t && t.raw === node.ch) return idx + 1;
+      fail(st, idx, "expected '" + node.ch + "'"); return null; }
+    case 'type': return matchType(node.name, toks, idx, st);
+    case 'opt':{ const r = matchNode(node.node, toks, idx, st); return r == null ? idx : r; }
+    case 'seq':{ let cur = idx;
+      for (const p of node.parts){ const r = matchNode(p, toks, cur, st); if (r == null) return null; cur = r; }
+      return cur; }
+    case 'alt':{ for (const p of node.parts){ const r = matchNode(p, toks, idx, st); if (r != null) return r; }
+      return null; }
+    case 'rep':{ let cur = idx, c = 0;
+      for (;;){ const r = matchNode(node.node, toks, cur, st); if (r == null || r === cur) break;
+        cur = r; c++; if (c >= node.max) break; }
+      if (c >= node.min) return cur;
+      fail(st, idx, 'the value is too short — at least ' + node.min + ' part' + (node.min > 1 ? 's' : '') + ' expected');
+      return null; }
+    case 'any': return matchAny(node.parts, toks, idx, st, new Set());
+  }
+  return null;
+}
+function matchAny(parts, toks, idx, st, used){
+  if (++st.steps > 20000){ fail(st, idx, 'value too complex to check'); return null; }
+  if (idx === toks.length) return idx;
+  for (let k = 0; k < parts.length; k++){
+    if (used.has(k)) continue;
+    const r = matchNode(parts[k], toks, idx, st);
+    if (r != null && r > idx){
+      used.add(k);
+      const rr = matchAny(parts, toks, r, st, used);
+      if (rr != null) return rr;
+      used.delete(k);
+    }
+  }
+  fail(st, idx, toks[idx] ? "'" + toks[idx].raw + "' doesn't belong in this value" : 'unexpected end of value');
+  return null;
+}
+
+function isColorTok(r, st, idx){
+  const low = r.toLowerCase();
+  if (/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(r)) return true;
+  if (/^#[0-9a-f]+$/.test(r)){
+    fail(st, idx, "'" + r + "' — hex colours need 3, 4, 6 or 8 digits after the #");
+    return false;
+  }
+  if (/^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i.test(r)) return true;
+  if (COLORS.has(low)) return true;
+  const sug = suggest(low, [...COLORS]);
+  fail(st, idx, "'" + r + "' is not a colour" + (sug ? " — did you mean '" + sug + "'?" : ' (named colour, #hex or rgb(…))'));
+  return false;
+}
+function isLenTok(r, st, idx, pctOk){
+  if (/^(calc|min|max|clamp)\(/i.test(r)) return true;
+  if (/^[+-]?(\d+\.?\d*|\.\d+)%$/.test(r)){
+    if (pctOk) return true;
+    fail(st, idx, "% needs a property that takes percentages — here a unit like px/em is required");
+    return false;
+  }
+  const m = /^([+-]?(?:\d+\.?\d*|\.\d+))([a-z]*)$/i.exec(r);
+  if (!m){ fail(st, idx, "'" + r + "' is not a length (e.g. 10px)"); return false; }
+  const u = (m[2] || '').toLowerCase();
+  if (u === ''){
+    if (parseFloat(r) === 0) return true;
+    fail(st, idx, "'" + r + "' is missing its unit — write " + r + "px (0 is the only number allowed bare)");
+    return false;
+  }
+  if (UNITS.has(u)) return true;
+  fail(st, idx, "'" + u + "' isn't a CSS unit (px, em, %, pt…)");
+  return false;
+}
+function numTok(r){ return /^[+-]?(\d+\.?\d*|\.\d+)$/.test(r); }
+
+function matchType(name, toks, idx, st){
+  const t = toks[idx];
+  if (!t){ fail(st, idx, 'the value ends early'); return null; }
+  const r = t.raw, low = r.toLowerCase();
+  switch (name){
+    case 'C': return isColorTok(r, st, idx) ? idx + 1 : null;
+    case 'L': return isLenTok(r, st, idx, false) ? idx + 1 : null;
+    case 'LP': return isLenTok(r, st, idx, true) ? idx + 1 : null;
+    case 'P':{ if (/^[+-]?(\d+\.?\d*|\.\d+)%$/.test(r)) return idx + 1;
+      fail(st, idx, "'" + r + "' is not a percentage (e.g. 50%)"); return null; }
+    case 'N':{ if (numTok(r)) return idx + 1;
+      fail(st, idx, "'" + r + "' is not a plain number"); return null; }
+    case 'I':{ if (/^[+-]?\d+$/.test(r)) return idx + 1;
+      fail(st, idx, "'" + r + "' is not a whole number"); return null; }
+    case 'N01':{ if (numTok(r) && parseFloat(r) >= 0 && parseFloat(r) <= 1) return idx + 1;
+      fail(st, idx, "'" + r + "' must be a number from 0 to 1"); return null; }
+    case 'FWNUM':{ if (/^[1-9]00$/.test(r)) return idx + 1;
+      fail(st, idx, "font-weight numbers must be 100, 200 … 900 (multiples of 100)"); return null; }
+    case 'A':{ if (/^[+-]?(\d+\.?\d*|\.\d+)(deg|grad|rad|turn)$/i.test(r)) return idx + 1;
+      if (r === '0') return idx + 1;
+      fail(st, idx, "'" + r + "' is not an angle (e.g. 45deg)"); return null; }
+    case 'T':{ if (/^[+-]?(\d+\.?\d*|\.\d+)(s|ms)$/i.test(r)) return idx + 1;
+      fail(st, idx, "'" + r + "' is not a time (e.g. 0.3s or 300ms)"); return null; }
+    case 'U':{ if (/^url\(/i.test(r)) return idx + 1;
+      fail(st, idx, "expected url(…)"); return null; }
+    case 'grad': return isGradTok(r, st, idx) ? idx + 1 : null;
+    case 'fam': return matchFamily(toks, idx, st);
+    case 'LST':{ if (LST_TYPES.has(low)) return idx + 1;
+      const sug = suggest(low, [...LST_TYPES]);
+      fail(st, idx, "'" + r + "' is not a list marker" + (sug ? " — did you mean '" + sug + "'?" : ''));
+      return null; }
+    case 'shadows': return matchShadows(toks, idx, st);
+    case 'tfns': return matchTransforms(toks, idx, st);
+    case 'trans': return matchTransition(toks, idx, st);
+    case 'flexv':{ for (let k = idx; k < toks.length; k++){
+        const rr = toks[k].raw, lw = rr.toLowerCase();
+        if (lw === 'auto' || lw === 'none' || lw === 'initial' || numTok(rr) || isLenTok(rr, st, k, true)) continue;
+        fail(st, k, "'" + rr + "' doesn't fit in flex");
+        return null;
+      } return toks.length; }
+    case 'cur':{ for (let k = idx; k < toks.length; k++){
+        const rr = toks[k].raw, lw = rr.toLowerCase();
+        if (CURSORS.has(lw) || /^url\(/i.test(rr)) continue;
+        const sug = suggest(lw, [...CURSORS]);
+        fail(st, k, "'" + rr + "' is not a cursor" + (sug ? " — did you mean '" + sug + "'?" : ''));
+        return null;
+      } return toks.length; }
+    case 'id':{ if (/^[a-zA-Z][\w-]*$/.test(r) || /^--[\w-]+$/.test(r)) return idx + 1;
+      fail(st, idx, "'" + r + "' is not an identifier"); return null; }
+    case 'any':{ for (let k = idx; k < toks.length; k++){
+        const rr = toks[k].raw, lw = rr.toLowerCase();
+        if (lw === 'inherit' || lw === 'initial' || lw === 'unset' || lw === 'revert') continue;
+        fail(st, k, "'" + rr + "' is not valid here");
+        return null;
+      } return toks.length; }
+    default: return idx + 1;   /* unknown type in a spec: accept */
+  }
+}
+function isGradTok(r, st, idx){
+  const m = /^([a-z-]+gradient)\(/i.exec(r);
+  if (!m){ fail(st, idx, "'" + r + "' is not a gradient function"); return false; }
+  const inner = r.slice(r.indexOf('(') + 1, -1);
+  const parts = [];
+  let depth = 0, cur = '';
+  for (const ch of inner){
+    if (ch === '(') depth++;
+    if (ch === ')') depth--;
+    if (ch === ',' && depth === 0){ parts.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  parts.push(cur);
+  for (const part of parts){
+    const p = part.trim();
+    if (!p){ fail(st, idx, 'the gradient has an empty part — check the commas'); return false; }
+    const first = p.split(/\s+/)[0];
+    if (/^(to|from|at|circle|ellipse)$/i.test(first)) continue;
+    if (/^(closest|farthest)-?(side|corner)$/i.test(first)) continue;
+    if (isColorTok(first, st, idx)){
+      const rest = p.slice(first.length).trim();
+      if (rest && !/^[+-]?[\d.]+(%|deg|turn|grad|rad)?$/i.test(rest.split(/\s+/)[0]) && !/^(to|at|from)$/i.test(rest.split(/\s+/)[0])){
+        fail(st, idx, "'" + rest + "' after the colour in the gradient — use a comma between stops (e.g. red 20%, blue)");
+        return false;
+      }
+      continue;
+    }
+    if (/^[+-]?[\d.]+(deg|turn|grad|rad)?$/i.test(first) || /^#[0-9a-f]+$/i.test(first)) continue;
+    fail(st, idx, "'" + first + "' doesn't look like a colour stop or angle in " + m[1] + "()");
+    return false;
+  }
+  return true;
+}
+function matchFamily(toks, idx, st){
+  const groups = splitTopCommas(toks.slice(idx));
+  for (const g of groups){
+    if (!g.length){ fail(st, idx, "extra ',' in font-family"); return null; }
+    if (g.length === 1 && /^["']/.test(g[0].raw)){
+      const q = g[0].raw[0];
+      if (g[0].raw.length < 2 || !g[0].raw.endsWith(q)){
+        fail(st, idx, "the font name is missing its closing " + q); return null;
+      }
+      continue;
+    }
+    for (const t of g){
+      if (!/^[a-zA-Z$\\][\w\-\xc0-\uffff]*$/.test(t.raw)){
+        fail(st, idx, "'" + t.raw + "' can't be part of an unquoted font name — put quotes around the whole name");
+        return null;
+      }
+    }
+  }
+  return toks.length;
+}
+function matchShadows(toks, idx, st){
+  const groups = splitTopCommas(toks.slice(idx));
+  const st2 = {best:null};
+  for (const g of groups){
+    if (g.length === 1 && g[0].raw.toLowerCase() === 'none') continue;
+    let lens = 0;
+    for (const t of g){
+      const lw = t.raw.toLowerCase();
+      if (lw === 'inset') continue;
+      if (isColorTok(t.raw, st2, 0)) continue;
+      if (isLenTok(t.raw, st2, 0, true)){ lens++; continue; }
+      fail(st, idx + toks.indexOf(t), "'" + t.raw + "' doesn't fit in a shadow (lengths, a colour, or 'inset')");
+      return null;
+    }
+    if (lens < 2){ fail(st, idx, 'a shadow needs at least two lengths (offset-x and offset-y)'); return null; }
+  }
+  return toks.length;
+}
+function matchTransforms(toks, idx, st){
+  for (let k = idx; k < toks.length; k++){
+    const r = toks[k].raw;
+    if (r.toLowerCase() === 'none') continue;
+    const m = /^([a-z-]+)\((.*)\)$/i.exec(r);
+    if (!m){ fail(st, k, "'" + r + "' is not a transform — use functions like translate(10px, 5px) or rotate(45deg)"); return null; }
+    if (!TFNS.has(m[1].toLowerCase())){
+      const sug = suggest(m[1], [...TFNS]);
+      fail(st, k, "'" + m[1] + "' is not a transform function" + (sug ? " — did you mean '" + sug + "'?" : ''));
+      return null;
+    }
+    for (const argp of m[2].split(',')){
+      const a2 = argp.trim();
+      if (!a2) continue;
+      if (!/^[+-]?([\d.]+(px|em|rem|%|deg|grad|rad|turn)?|[\d.]+)(\s+[+-]?[\d.]+(px|em|rem|%|deg|grad|rad)?)*$/i.test(a2)){
+        fail(st, k, "'" + a2 + "' is not a valid argument for " + m[1] + "()");
+        return null;
+      }
+    }
+  }
+  return toks.length;
+}
+function matchTransition(toks, idx, st){
+  let sawTime = false;
+  for (let k = idx; k < toks.length; k++){
+    const r = toks[k].raw, lw = r.toLowerCase();
+    if (/^[+-]?[\d.]+(s|ms)$/i.test(r)){ sawTime = true; continue; }
+    if (TF_KEYWORDS.has(lw)) continue;
+    if (/^cubic-bezier\(/i.test(r)){
+      const args = r.slice(r.indexOf('(') + 1, -1).split(',');
+      if (args.length !== 4 || !args.every(a => numTok(a.trim()))){
+        fail(st, k, 'cubic-bezier takes exactly four numbers'); return null;
+      }
+      continue;
+    }
+    if (/^steps\(/i.test(r)) continue;
+    if (/^[a-zA-Z][\w-]*$/.test(r)) continue;
+    fail(st, k, "'" + r + "' doesn't fit in a transition (time, easing, or property name)");
+    return null;
+  }
+  if (!sawTime) fail(st, idx, 'a transition needs a duration, e.g. transition: all 0.3s ease');
+  return sawTime ? toks.length : null;
+}
+
+function matchSpec(toks, specStr){
+  const ast = parseSpec(specStr);
+  const st = {best:null, steps:0};
+  const r = matchNode(ast, toks, 0, st);
+  if (r != null && r === toks.length) return {ok:true};
+  if (r != null && r < toks.length)
+    return {ok:false, msg:"'" + toks[r].raw + "' doesn't belong in this value", tok:toks[r]};
+  const b = st.best || {idx:0, msg:'invalid value'};
+  return {ok:false, msg:b.msg, tok:toks[Math.min(b.idx, toks.length - 1)]};
+}
+
+function checkProperty(propRaw, valRaw, propRange, valRange, add){
+  const prop = propRaw.trim().toLowerCase();
+  if (!prop){
+    add('err', propRange[0], propRange[1], 'css-noprop', 'Missing property name',
+        'This declaration has a ":" but no property before it. Declarations look like  property: value;', null);
+    return;
+  }
+  if (!valRaw.trim()){
+    add('err', valRange[0], valRange[1], 'css-novalue', "'" + prop + "' has no value",
+        'The property is there but the value after ":" is empty.', null);
+    return;
+  }
+  if (/^-(webkit|moz|ms|o)-/.test(prop)) return;    /* vendor prefixes: accepted as-is */
+  if (!(prop in PROPS)){
+    let sug = suggest(prop, PROP_NAMES);
+    const nospace = prop.replace(/\s+/g, '-');
+    if (!sug && (nospace in PROPS)){
+      add('err', propRange[0], propRange[1], 'css-unknown-prop', "'" + propRaw.trim() + "' is not a CSS property",
+          "CSS properties can't contain spaces — properties with more than one word are joined by hyphens.",
+          'Did you mean ' + nospace + '?');
+      return;
+    }
+    add('err', propRange[0], propRange[1], 'css-unknown-prop', "'" + propRaw.trim() + "' is not a CSS property",
+        'The browser doesn\'t know this property, so the whole declaration is dropped — the element simply keeps its default look.' +
+        (sug ? " Did you mean '" + sug + "'?" : ''),
+        sug ? "Did you mean '" + sug + "'?" : 'Check the spelling.');
+    return;
+  }
+  /* strip !important, flag stray bangs */
+  let v = valRaw;
+  const bang = /!\s*important\s*$/i.exec(v);
+  if (bang) v = v.slice(0, bang.index);
+  if (v.includes('!')){
+    const at = valRange[0] + v.indexOf('!');
+    add('err', at, at + v.length - v.indexOf('!'), 'css-bang', "Unexpected '!'",
+        "Only !important is allowed after a value (e.g. color: red !important).", null);
+    return;
+  }
+  const toks = cssTokens(v);
+  if (toks.length === 1 && ['inherit','initial','unset','revert'].includes(toks[0].raw.toLowerCase())) return;
+  let res;
+  if (prop === 'font') res = matchFontShorthand(toks);
+  else res = matchSpec(toks, PROPS[prop]);
+  if (!res.ok){
+    const t = res.tok || toks[0];
+    add('err', valRange[0] + t.s, valRange[0] + t.e, 'css-bad-value', "Invalid value for '" + prop + "'",
+        res.msg + '.', "'" + prop + "' is part of this declaration:\n" + trunc(propRaw.trim() + ': ' + valRaw.trim(), 90));
+  }
+}
+function matchFontShorthand(toks){
+  const kwRe = /^(normal|italic|oblique|small-caps|bold|bolder|lighter|[1-9]00)$/;
+  const seenKw = new Set();
+  let i = 0;
+  while (i < toks.length && kwRe.test(toks[i].raw.toLowerCase())){
+    if (seenKw.has(toks[i].raw.toLowerCase())) return {ok:false, msg:"'" + toks[i].raw + "' appears twice", tok:toks[i]};
+    seenKw.add(toks[i].raw.toLowerCase()); i++;
+  }
+  if (i >= toks.length)
+    return {ok:false, msg:'the font shorthand needs a size and a family, e.g. font: italic 14px Arial', tok:toks[0]};
+  const st = {best:null};
+  const sizeTok = toks[i];
+  const sizeOk = isLenTok(sizeTok.raw, st, i, true) || FS_KW.has(sizeTok.raw.toLowerCase());
+  if (!sizeOk) return {ok:false, msg:st.best ? st.best.msg : "'" + sizeTok.raw + "' is not a font-size", tok:sizeTok};
+  i++;
+  if (i < toks.length && toks[i].raw === '/'){
+    i++;
+    const lh = toks[i];
+    if (!lh) return {ok:false, msg:"missing line-height after '/'", tok:toks[i-1]};
+    if (!(lh.raw.toLowerCase() === 'normal' || numTok(lh.raw) || isLenTok(lh.raw, st, i, true)))
+      return {ok:false, msg:"'" + lh.raw + "' is not a line-height", tok:lh};
+    i++;
+  }
+  if (i >= toks.length)
+    return {ok:false, msg:'the font shorthand also needs a font-family, e.g. font: 14px Arial', tok:toks[i-1]};
+  if (matchFamily(toks, i, st) == null)
+    return {ok:false, msg:st.best ? st.best.msg : 'not a valid font-family', tok:toks[i]};
+  return {ok:true};
+}
+const FS_KW = new Set('xx-small x-small small medium large x-large xx-large larger smaller'.split(' '));
+
+/* ---- CSS block/declaration parsing with positions ---- */
+function lintCssText(cssText, base, add, srcKind){
+  /* mask comments so they don't affect syntax */
+  const masked = cssText.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, m => m.replace(/[^\n]/g, ' '));
+  const stack = [];
+  let topStart = 0, i = 0;
+  const blocks = [];
+  while (i < masked.length){
+    const ch = masked[i];
+    if (ch === '{'){ stack.push({open:i, selStart:topStart}); topStart = i + 1; i++; continue; }
+    if (ch === '}'){
+      if (!stack.length){
+        add('err', base + i, base + i + 1, 'css-stray', "Unexpected '}'",
+            'There is no open { for this } to close. Everything after it is treated as being outside the rule.',
+            'Delete the }, or add the missing { above.');
+        i++; topStart = i; continue;
+      }
+      const r = stack.pop();
+      r.close = i;
+      blocks.push(r);
+      topStart = i + 1; i++; continue;
+    }
+    i++;
+  }
+  for (const r of stack){
+    const lc = lineCol(base + r.open);
+    add('err', base + r.open, base + r.open + 1, 'css-missbrace', 'Missing }',
+        'This rule (line ' + lc.line + ') is opened with { but never closed. The browser treats all following CSS — and possibly the rest of the page — as part of this one rule.',
+        'Add a } where the rule should end.');
+  }
+  /* trailing text outside any rule */
+  const trailing = masked.slice(topStart);
+  if (!stack.length && trailing.trim()){
+    const ts = base + topStart + (trailing.length - trailing.trimStart().length);
+    if (/[;:]/.test(trailing))
+      add('err', ts, ts + trailing.trim().length, 'css-outside', 'CSS outside a rule',
+          'Declarations must sit inside  selector { … }  — this text is outside any rule, so the browser ignores it.',
+          'Check for a missing { above, or wrap it in a rule.');
+    else
+      add('warn', ts, ts + trailing.trim().length, 'css-outside', 'Text outside any rule',
+          'This text sits between rules, where CSS ignores it.', 'Check for a missing { or }.');
+  }
+  for (const r of blocks){
+    const selMasked = masked.slice(r.selStart, r.open);
+    const selTrim = selMasked.trim();
+    const selStart = base + r.selStart + (selMasked.length - selMasked.trimStart().length);
+    const selEnd = base + r.selStart + selMasked.trimEnd().length;
+    if (!selTrim){
+      add('err', base + r.open, base + r.open + 1, 'css-nosel', 'Missing selector',
+          'A rule starts with { but nothing selects what it should style. Rules look like  h1 { color: red }', null);
+    } else {
+      if (selTrim.includes(';')){
+        add('err', selStart, selEnd, 'css-sel-semi', 'Selector contains ;',
+            'This looks like CSS declarations written outside a { } rule — a } is probably missing above, or the declarations were never wrapped in a rule.',
+            'Wrap the declarations in selector { … }.');
+      } else if (selTrim[0] !== '@'){
+        const dm = /^([^:{}]+)\s*:\s*([^;{}]+)$/.exec(selTrim);
+        if (dm && dm[1].trim().toLowerCase() in PROPS)
+          add('err', selStart, selEnd, 'css-sel-decl', 'This looks like a declaration, not a selector',
+              'Before every { there must be a selector (what to style), e.g. h1 or .title. "' + trunc(selTrim, 40) + '" is a property: value pair.',
+              'Add a selector before {, or move this inside an existing rule.');
+      }
+    }
+    const body = masked.slice(r.open + 1, r.close);
+    if (body.includes('{') || body.includes('}')) continue;   /* @-media / nested rules: blocks handled separately */
+    lintDecls(body, base + r.open + 1, add);
+  }
+}
+
+/* find matching close brace for a block opened at index open in masked */
+function lintDecls(body, base, add){
+  let segStart = 0;
+  let depth = 0, inQ = null;
+  const segs = [];
+  for (let i = 0; i < body.length; i++){
+    const ch = body[i];
+    if (inQ){ if (ch === inQ) inQ = null; continue; }
+    if (ch === '"' || ch === "'"){ inQ = ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (ch === ';' && depth === 0){ segs.push([segStart, i]); segStart = i + 1; }
+  }
+  segs.push([segStart, body.length]);
+  for (const [s, e] of segs){
+    const raw = body.slice(s, e);
+    if (!raw.trim()) continue;
+    const ci = findColon(raw);
+    if (ci < 0){
+      const at = base + s + (raw.length - raw.trimStart().length);
+      add('err', at, at + raw.trim().length, 'css-nocolon', "Missing ':' in this declaration",
+          'Declarations are written  property: value — there is no colon here, so the browser drops it.',
+          'Add the colon, e.g. ' + raw.trim().split(/\s+/)[0] + ': …');
+      continue;
+    }
+    const c2 = findColon(raw, ci + 1);
+    if (c2 >= 0){
+      const at = base + s + c2;
+      add('err', at, at + 1, 'css-nosemi', "Missing ';' between declarations",
+          'Two ":" on one line usually mean a ; was forgotten before this point — one declaration must end before the next begins.',
+          'Add a ; after the previous value.');
+      continue;
+    }
+    const propRaw = raw.slice(0, ci);
+    const valRaw = raw.slice(ci + 1);
+    const propS = base + s + (propRaw.length - propRaw.trimStart().length);
+    const valS = base + s + ci + 1 + (valRaw.length - valRaw.trimStart().length);
+    const valE = base + s + ci + 1 + valRaw.trimEnd().length;
+    checkProperty(propRaw, valRaw, [propS, propS + propRaw.trimEnd().length], [valS, valE], add);
+  }
+}
+function findColon(s, from){
+  let depth = 0, q = null;
+  for (let i = from || 0; i < s.length; i++){
+    const ch = s[i];
+    if (q){ if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'"){ q = ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (ch === ':' && depth === 0) return i;
+  }
+  return -1;
+}
+
+/* ============================================================
+   RENDER — overlay, gutter, list, detail
+   ============================================================ */
+function computePieces(){
+  const sevRank = {err:0, warn:1, info:2};
+  const sorted = [...errors].sort((a, b) => sevRank[a.sev] - sevRank[b.sev] || a.s - b.s);
+  const accepted = [];                 /* non-overlapping, possibly split */
+  for (const e of sorted){
+    let ranges = [[e.s, Math.max(e.s + 1, e.e)]];
+    for (const [s2, e2, id2] of accepted){
+      const next = [];
+      for (const [s1, e1] of ranges){
+        if (e1 <= s2 || s1 >= e2){ next.push([s1, e1]); continue; }
+        if (s1 < s2) next.push([s1, s2]);
+        if (e2 < e1) next.push([e2, e1]);
+      }
+      ranges = next;
+    }
+    for (const [s1, e1] of ranges) accepted.push([s1, e1, errors.indexOf(e)]);
+  }
+  pieces = accepted.map(([s, e, id]) => ({s, e, id, sev:errors[id].sev}))
+                   .sort((a, b) => a.s - b.s);
+}
+function renderOverlay(){
+  computePieces();
+  const bounds = new Set([0, src.length]);
+  for (const t of tokens){ bounds.add(t.s); bounds.add(Math.min(t.e, src.length)); }
+  for (const p of pieces){ bounds.add(p.s); bounds.add(Math.min(p.e, src.length)); }
+  const bs = [...bounds].filter(b => b >= 0 && b <= src.length).sort((a, b) => a - b);
+  let html = '';
+  for (let i = 0; i < bs.length - 1; i++){
+    const s = bs[i], e = bs[i + 1];
+    if (e <= s) continue;
+    const text = escH(src.slice(s, e));
+    const piece = pieces.find(p => p.s <= s && e <= p.e);
+    const tok = tokens.find(t => t.s <= s && t.e >= e && t.cls !== 'tx');
+    if (piece){
+      const inner = tok ? '<span class="tk-' + tok.cls + '">' + text + '</span>' : text;
+      html += '<span class="e e-' + piece.sev + '" data-e="' + piece.id + '">' + inner + '</span>';
+    } else if (tok){
+      html += '<span class="tk-' + tok.cls + '">' + text + '</span>';
+    } else html += text;
+  }
+  hl.innerHTML = html + '\u200b';
+}
+function worstByLine(){
+  const rank = {err:0, warn:1, info:2};
+  const m = new Map();
+  for (const e of errors){
+    const li = lineIdx(e.s);
+    const cur = m.get(li);
+    if (!cur || rank[e.sev] < rank[cur.sev]) m.set(li, e);
+  }
+  return m;
+}
+function renderGutter(){
+  const byLine = worstByLine();
+  let html = '';
+  for (let i = 0; i < lines.length; i++){
+    const e = byLine.get(i);
+    html += '<div class="ln' + (e ? ' ' + e.sev : '') + '" data-line="' + i + '">' + (i + 1) +
+            (e ? '<span class="dot ' + e.sev + '"></span>' : '') + '</div>';
+  }
+  gutterIn.innerHTML = html;
+}
+function renderCounts(){
+  const nE = errors.filter(e => e.sev === 'err').length;
+  const nW = errors.filter(e => e.sev === 'warn').length;
+  const nI = errors.filter(e => e.sev === 'info').length;
+  if (!nE && !nW && !nI){
+    countsEl.innerHTML = '<span class="ok">✓ No problems found</span>';
+    hintEl.textContent = 'Browsers forgive a lot — but right now there\'s nothing to forgive. Keep going!';
+    return;
+  }
+  countsEl.innerHTML =
+    (nE ? '<span class="n-err">' + nE + ' error' + (nE > 1 ? 's' : '') + '</span>' : '') +
+    (nW ? (nE ? ' · ' : '') + '<span class="n-warn">' + nW + ' warning' + (nW > 1 ? 's' : '') + '</span>' : '') +
+    (nI ? ((nE || nW) ? ' · ' : '') + '<span class="n-info">' + nI + ' hint' + (nI > 1 ? 's' : '') + '</span>' : '');
+  hintEl.textContent = 'Hover or click a squiggly underline (or a marked line number) for details.';
+}
+function renderList(){
+  let html = '';
+  errors.forEach((e, i) => {
+    html += '<li data-e="' + i + '"><span class="row-sev" style="background:var(--' +
+      (e.sev === 'err' ? 'err' : e.sev === 'warn' ? 'warn' : 'info') + ')"></span>' +
+      '<span class="row-msg">' + escH(trunc(e.title, 46)) + '</span>' +
+      '<span class="row-loc">' + e.line + ':' + e.col + '</span></li>';
+  });
+  listEl.innerHTML = html;
+}
+function renderDetail(e){
+  if (!e){
+    detailEl.innerHTML = '<span class="det-hint">Pick a problem from the list, or hover one of the underlines in the editor.</span>';
+    return;
+  }
+  const chip = e.sev === 'err' ? 'error' : e.sev === 'warn' ? 'warning' : 'hint';
+  let html = '<span class="sev-chip ' + e.sev + '">' + chip + '</span>' +
+    '<h3 style="display:inline">' + escH(e.title) + '</h3>' +
+    '<div class="det-loc">line ' + e.line + ', column ' + e.col + '</div>' +
+    '<div>' + escH(e.msg).replace(/\n/g, '<br>') + '</div>';
+  const snip = trunc(src.slice(e.s, Math.max(e.e, e.s + 1)).replace(/\n+/g, ' '), 90);
+  if (snip.trim()) html += '<div class="det-snip">' + escH(snip) + '</div>';
+  if (e.fix) html += '<div class="det-fix"><b>Fix:</b> ' + escH(e.fix) + '</div>';
+  detailEl.innerHTML = html;
+}
+
+/* ============================================================
+   EDITOR GLUE — sync, hover mapping, active error
+   ============================================================ */
+function measureFont(){
+  const probe = document.createElement('span');
+  probe.textContent = 'M'.repeat(50);
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:inherit';
+  hl.appendChild(probe);
+  const w = probe.getBoundingClientRect().width / 50;
+  hl.removeChild(probe);
+  if (w > 1) charW = w;
+}
+function syncScroll(){
+  hl.scrollTop = ta.scrollTop;
+  hl.scrollLeft = ta.scrollLeft;
+  gutterIn.style.transform = 'translateY(' + (-ta.scrollTop) + 'px)';
+}
+function offsetAt(clientX, clientY){
+  const r = ta.getBoundingClientRect();
+  const x = clientX - r.left + ta.scrollLeft - PADL;
+  const y = clientY - r.top + ta.scrollTop - PADT;
+  const li = Math.max(0, Math.min(lines.length - 1, Math.floor(y / LH)));
+  const lineStart = lines[li];
+  const lineEnd = li + 1 < lines.length ? lines[li + 1] - 1 : src.length;
+  const col = Math.max(0, Math.min(lineEnd - lineStart, Math.floor(x / charW)));
+  return {off: lineStart + col, li};
+}
+function errNear(off){
+  let best = null, bestRank = 9;
+  const rank = {err:0, warn:1, info:2};
+  for (const e of errors){
+    if (off >= e.s - 1 && off <= e.e + 1){
+      if (rank[e.sev] < bestRank){ best = e; bestRank = rank[e.sev]; }
+    }
+  }
+  return best;
+}
+function setActive(e, mode){
+  activeErr = e;
+  hl.querySelectorAll('.e.active').forEach(el => el.classList.remove('active'));
+  listEl.querySelectorAll('li.active').forEach(el => el.classList.remove('active'));
+  if (e){
+    const id = errors.indexOf(e);
+    hl.querySelectorAll('.e[data-e="' + id + '"]').forEach(el => el.classList.add('active'));
+    const row = listEl.querySelector('li[data-e="' + id + '"]');
+    if (row){ row.classList.add('active'); row.scrollIntoView({block:'nearest'}); }
+    renderDetail(e);
+    if (mode === 'hover' || mode === 'click') openPanel();
+  } else if (pinnedErr){
+    renderDetail(pinnedErr);
+  }
+}
+function setPanel(open){
+  panel.classList.toggle('open', open);
+  panelToggle.textContent = open ? '▼' : '▲';
+  panelToggle.title = open ? 'Hide details' : 'Show details';
+  if (!open) pinnedErr = null;
+}
+function openPanel(){ setPanel(true); }
+function closePanel(){
+  setPanel(false);
+  setActive(null);
+}
+function jumpTo(e){
+  ta.focus();
+  ta.setSelectionRange(e.s, Math.max(e.s + 1, Math.min(e.e, src.length)));
+  const li = lineIdx(e.s);
+  ta.scrollTop = Math.max(0, li * LH - ta.clientHeight / 2 + LH);
+  ta.scrollLeft = 0;
+  syncScroll();
+  updatePos();
+}
+
+/* ============================================================
+   UPDATE PIPELINE
+   ============================================================ */
+function update(){
+  src = ta.value;
+  lines = buildLines(src);
+  const tk = tokenizeHtml(src);
+  tokens = tk.tokens; tags = tk.tags; raws = tk.raws;
+  errors = [];
+  const add = (sev, s, e, code, title, msg, fix) => {
+    const lc = lineCol(s);
+    errors.push({sev, s, e:Math.max(e, s + 1), code, title, msg, fix, line:lc.line, col:lc.col});
+  };
+  const styleDecls = validateHtml(add);
+  for (const r of raws){
+    if (r.name === 'style') lintCssText(src.slice(r.s, r.e), r.s, add, 'style');
+  }
+  for (const d of styleDecls) lintDecls(d.val, d.base, add);
+  errors.sort((a, b) => a.s - b.s);
+  renderOverlay();
+  renderGutter();
+  renderCounts();
+  renderList();
+  if (activeErr){
+    const id = errors.indexOf(activeErr);
+    if (id < 0){ activeErr = pinnedErr = null; renderDetail(null); }
+  }
+  scheduleRun();
+}
+function scheduleRun(){
+  clearTimeout(runTimer);
+  pvNote.textContent = '● preview out of date';
+  pvNote.classList.add('stale');
+  runTimer = setTimeout(runPreview, 400);
+}
+function runPreview(){
+  pv.srcdoc = ta.value;
+  pvNote.textContent = 'updates as you type';
+  pvNote.classList.remove('stale');
+}
+function updatePos(){
+  const p = lineCol(ta.selectionStart === undefined ? 0 : ta.selectionStart);
+  posEl.textContent = 'line ' + p.line + ', col ' + p.col;
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+ta.addEventListener('input', () => { update(); updatePos(); });
+ta.addEventListener('scroll', syncScroll);
+ta.addEventListener('keydown', e => {
+  if (e.key === 'Tab'){
+    e.preventDefault();
+    ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+    update();
+  } else if (e.key === 'Enter'){
+    /* simple auto-indent: keep the line's leading spaces */
+    const st = ta.selectionStart;
+    const ls = src.lastIndexOf('\n', st - 1) + 1;
+    const indent = /^[ \t]*/.exec(src.slice(ls, st))[0];
+    const extra = src[st - 1] === '>' ? '  ' : '';
+    if (indent || extra){
+      e.preventDefault();
+      ta.setRangeText('\n' + indent + extra, st, ta.selectionEnd, 'end');
+      update(); updatePos();
+    }
+  } else if (e.key === 'Escape' && panel.classList.contains('open')){
+    closePanel();
+  }
+});
+ta.addEventListener('keyup', updatePos);
+ta.addEventListener('click', e => {
+  updatePos();
+  const hit = errNear(offsetAt(e.clientX, e.clientY).off);
+  if (hit){ pinnedErr = hit; setActive(hit, 'click'); }
+});
+let lastHover = 0;
+ta.addEventListener('mousemove', e => {
+  const now = Date.now();
+  if (now - lastHover < 40) return;   /* time-based throttle: rAF never fires in background tabs */
+  lastHover = now;
+  const hit = errNear(offsetAt(e.clientX, e.clientY).off);
+  if (hit !== activeErr) setActive(hit, hit ? 'hover' : null);
+});
+ta.addEventListener('mouseleave', () => { if (activeErr && !pinnedErr) setActive(null); });
+
+gutterEl.addEventListener('click', e => {
+  const ln = e.target.closest('.ln');
+  if (!ln) return;
+  const li = +ln.dataset.line;
+  /* first error at or after this line */
+  let best = null;
+  for (const er of errors){
+    const l = lineIdx(er.s);
+    if (l === li){ best = er; break; }
+    if (l > li && !best) { best = er; break; }
+  }
+  if (best){ pinnedErr = best; setActive(best, 'click'); jumpTo(best); }
+});
+listEl.addEventListener('click', e => {
+  const li = e.target.closest('li');
+  if (!li) return;
+  const err = errors[+li.dataset.e];
+  if (err){ pinnedErr = err; setActive(err, 'click'); jumpTo(err); }
+});
+listEl.addEventListener('mousemove', e => {
+  const li = e.target.closest('li');
+  if (li){ const err = errors[+li.dataset.e]; if (err && err !== activeErr) setActive(err, 'list'); }
+});
+$('#panel-toggle').addEventListener('click', () => setPanel(!panel.classList.contains('open')));
+$('#help-btn').addEventListener('click', () => $('#help').showModal());
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && panel.classList.contains('open') && !$('#help').open) closePanel();
+});
+
+/* splitter */
+(function splitter(){
+  const split = $('#split'), editorPane = $('#editor-pane');
+  let dragging = false;
+  split.addEventListener('pointerdown', e => {
+    dragging = true; split.classList.add('drag'); split.setPointerCapture(e.pointerId);
+  });
+  split.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const main = document.querySelector('main');
+    const r = main.getBoundingClientRect();
+    const pct = Math.min(80, Math.max(15, ((e.clientX - r.left) / r.width) * 100));
+    editorPane.style.flexBasis = pct + '%';
+  });
+  split.addEventListener('pointerup', () => {
+    dragging = false; split.classList.remove('drag');
+    try{ localStorage.setItem('editor.split', $('#editor-pane').style.flexBasis); }catch{}
+  });
+  const saved = (() => { try{ return localStorage.getItem('editor.split'); }catch{ return null; } })();
+  if (saved) editorPane.style.flexBasis = saved;
+})();
+
+/* ============================================================
+   EXAMPLES
+   ============================================================ */
+const EXAMPLES = {};
+EXAMPLES.starter =
+`<!doctype html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>Warung Kak Sarah</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    h1 { color: darkblue; }
+    table { border-collapse: collapse; }
+    th, td { border: 1px solid gray; padding: 6px 12px; }
+  </style>
+</head>
+<body>
+  <h1>Warung Kak Sarah</h1>
+  <p>Welcome! We sell the <b>best</b> nasi lemak in town.</p>
+
+  <h2>Today's menu</h2>
+  <ul>
+    <li>Nasi lemak with egg</li>
+    <li>Fried mee siam</li>
+    <li>Iced kopi-o</li>
+  </ul>
+
+  <h2>Prices</h2>
+  <table border="1">
+    <tr><th>Item</th><th>Price</th></tr>
+    <tr><td>Nasi lemak</td><td>$3.50</td></tr>
+    <tr><td>Mee siam</td><td>$3.00</td></tr>
+  </table>
+
+  <h2>Reserve a table</h2>
+  <form action="/reserve" method="post">
+    <p>Your name: <input type="text" name="name"></p>
+    <p><input type="submit" value="Send reservation"></p>
+  </form>
+</body>
+</html>
+`;
+EXAMPLES.broken =
+`<!doctype html>
+<html>
+<head>
+  <title>My Hobbies
+  <style>
+    h1 { colour: teal; }
+    p { margin: 10; }
+    body { font-family Arial; }
+    b { color: red
+  </style>
+</head>
+<body>
+  <h1>My Hobbies</h1>
+  <p>I love <b>football<i> and </b>chess</i> on weekends.
+  <p>My cat & I also enjoy baking.
+  <div>Fish & Chips
+  <table border="1">
+    <td>Row straight in the table?</td>
+    <tr><td>proper cell</td>
+  </table>
+  <img scr="cat.png" align="centre" alt="My cat photo>
+  <br>
+  </br>
+  <seciton>Extra</seciton>
+  <ul>
+    <li>Chess
+    <li>Swimming
+  </ul>
+  <body>
+    <p>Second body?!</p>
+  </body>
+</body>
+</html>
+`;
+EXAMPLES.table =
+`<!doctype html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>Class timetable</title>
+  <style>
+    table { border-collapse: collapse; width: 100%; }
+    caption { font-weight: bold; padding: 8px; }
+    th, td { border: 1px solid #999; padding: 6px 10px; text-align: left; }
+    thead { background-color: #eef2f7; }
+    td { vertical-align: top; }
+  </style>
+</head>
+<body>
+  <h1>2T07 timetable</h1>
+  <table border="1">
+    <caption>Term 2, week 3</caption>
+    <thead>
+      <tr><th>Day</th><th>08:00</th><th>10:00</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Mon</td><td>Computing</td><td>Maths</td></tr>
+      <tr><td>Tue</td><td colspan="2">Project work</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Sign up for consult</h2>
+  <form action="/consult" method="post">
+    <p><label for="who">Name:</label>
+       <input type="text" id="who" name="who"></p>
+    <p>Slot:
+       <select name="slot">
+         <option value="mon">Monday 15:00</option>
+         <option value="wed">Wednesday 16:00</option>
+       </select></p>
+    <p>Question:<br>
+       <textarea name="q" rows="4" cols="40"></textarea></p>
+    <p><input type="submit" value="Book"></p>
+  </form>
+</body>
+</html>
+`;
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+(function boot(){
+  let initial = null;
+  try{ initial = localStorage.getItem('editor.code.v2'); }catch{}
+  ta.value = initial !== null && initial !== '' ? initial : EXAMPLES.broken;
+  const params = new URLSearchParams(location.search);
+  if (params.get('example') && EXAMPLES[params.get('example')]){
+    ta.value = EXAMPLES[params.get('example')];
+  }
+  let saveTimer = null;
+  ta.addEventListener('input', () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { try{ localStorage.setItem('editor.code.v2', ta.value); }catch{} }, 800);
+  });
+  measureFont();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureFont);
+  window.addEventListener('resize', measureFont);
+  update();
+  runPreview();
+})();
+</script>
+</body>
+</html>

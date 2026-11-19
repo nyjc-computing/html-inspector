@@ -1742,7 +1742,7 @@ function renderDetail(e){
   if (e.mdn && e.mdn.length){
     const links = e.mdn.map(t =>
       '<a target="_blank" rel="noopener" href="' + mdnUrl(t) + '">&lt;' + escH(t) + '&gt; on MDN ↗</a>').join(' · ');
-    html += '<div class="det-links">MDN: ' + links + '</div>';
+    html += '<div class="det-links">Reference: ' + links + '</div>';
   }
   detailEl.innerHTML = html;
 }

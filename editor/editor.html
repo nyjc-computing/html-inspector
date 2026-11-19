@@ -128,6 +128,9 @@ main{flex:1;display:flex;min-height:0;min-width:0}
   padding:6px 10px;border-radius:4px;margin-top:10px;white-space:pre-wrap;word-break:break-all}
 .det-fix{background:#f2faf4;border-left:3px solid #1a7f37;padding:7px 12px;margin-top:10px;border-radius:0 4px 4px 0}
 .det-fix b{color:#1a7f37}
+.det-links{margin-top:10px;font-size:12.5px;color:var(--dim)}
+.det-links a{color:#1852cc;text-decoration:none}
+.det-links a:hover{text-decoration:underline}
 .det-hint{color:var(--dim)}
 
 /* ---- help dialog ---- */
@@ -262,6 +265,11 @@ function suggest(word, candidates){
     if (dd < bestD){ bestD = dd; best = c; }
   }
   return bestD <= (word.length <= 4 ? 1 : 2) ? best : null;
+}
+function mdnUrl(tag){
+  if (tag === 'doctype') return 'https://developer.mozilla.org/en-US/docs/Glossary/Doctype';
+  if (/^h[1-6]$/.test(tag)) return 'https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/Heading_Elements';
+  return 'https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/' + tag;
 }
 
 /* ============================================================
@@ -740,7 +748,7 @@ function validateHtml(add){
       if (!/^<!\s*doctype\s+html\s*>$/i.test(tag.text))
         add('warn', tag.s, tag.e, 'bad-doctype', 'Unusual doctype',
             'The doctype should read exactly <!doctype html>. Everything else sends the browser into "quirks mode" — an old, inconsistent set of layout rules.',
-            'Write <!doctype html> as the very first line.');
+            'Write <!doctype html> as the very first line.', ['doctype']);
       continue;
     }
     if (tag.kind === 'comment-unterm'){
@@ -755,7 +763,7 @@ function validateHtml(add){
           tag.recovered
             ? 'The ' + what + ' opened here is never closed, so the browser treats everything after this line as the page title — none of it shows on the page.'
             : 'The ' + what + ' opened here is never closed, so the browser treats the whole rest of the file as its content.',
-          'Add </' + tag.name + '> where the ' + what + ' element should end.');
+          'Add </' + tag.name + '> where the ' + what + ' element should end.', [tag.name]);
       if (tag.recovered){
         for (let i = stack.length - 1; i >= 0; i--)
           if (stack[i].name === tag.name){ stack[i].reported = true; break; }
@@ -765,7 +773,7 @@ function validateHtml(add){
     if (tag.kind === 'end-attrs'){
       add('warn', tag.s, tag.e, 'attrs-in-endtag', 'Closing tags can\'t have attributes',
           '</' + tag.name + '> carries "' + trunc(tag.junk, 30) + '" — attributes in a closing tag are simply ignored.',
-          'Remove the extra text after the tag name.');
+          'Remove the extra text after the tag name.', [tag.name]);
       continue;
     }
     if (tag.kind === 'end'){
@@ -784,12 +792,12 @@ function validateHtml(add){
     if (headOpen() && !bodyOpen() && (!top || top.name === 'head')){
       add('warn', t.s, Math.min(t.e, t.s + 40), 'text-in-head', 'Content inside <head>',
           'Visible text can\'t live in <head> — the browser will move it down into <body> when it renders, which is rarely where you wanted it.',
-          'Move this content below <body>.');
+          'Move this content below <body>.', ['head', 'body']);
     }
     if (top && TEXT_PARENTS[top.name])
       add('warn', t.s, Math.min(t.e, t.s + 40), 'text-in-' + top.name, 'Text inside <' + top.name + '>',
           '<' + top.name + '> only accepts specific child elements; ' + TEXT_PARENTS[top.name] + '. Browsers pull stray text out, so it can appear somewhere unexpected.',
-          'Wrap the text in the proper child element.');
+          'Wrap the text in the proper child element.', [top.name]);
   }
 
   function classify(name, tag){
@@ -801,13 +809,13 @@ function validateHtml(add){
     else if (HTML5_TAGS.has(name))
       add('warn', tag.s, tag.e, 'html5-tag', '<' + name + '> is an HTML5 tag',
           '<' + name + '> isn\'t part of HTML 4 — browsers render it fine, but it\'s outside this course\'s scope.',
-          'Use <div> with a class instead.');
+          'Use <div> with a class instead.', [name]);
     else {
       const sug = suggest(name, ALL_TAGS);
       add('err', tag.s, tag.e, 'unknown-tag', '<' + name + '> is not an HTML tag',
           'Browsers don\'t know <' + name + '>, so they quietly render its text without any element — no error, just a subtly wrong page.' +
           (sug ? ' Did you mean <' + sug + '>?' : ''),
-          sug ? 'Replace it with <' + sug + '>.' : 'Check the spelling against the element list.');
+          sug ? 'Replace it with <' + sug + '>.' : 'Check the spelling against the element list.', sug ? [sug] : null);
     }
   }
 
@@ -823,7 +831,7 @@ function validateHtml(add){
                     : ' The browser ignores the second one.';
         add('err', tag.s, tag.e, 'dup-' + name, 'Only one <' + name + '> is allowed',
             'A page contains exactly one <' + name + '> element, but this is #' + seen[name] + '.' + extra,
-            'Delete the extra <' + name + '> (and its </' + name + '>).');
+            'Delete the extra <' + name + '> (and its </' + name + '>).', [name]);
       }
     }
 
@@ -831,12 +839,12 @@ function validateHtml(add){
     if (inHead && !inBody && !UNIQUE.has(name) && !HEAD_OK.has(name)){
       add('warn', tag.s, tag.e, 'head-content', '<' + name + '> inside <head>',
           'Only metadata (title, meta, link, style…) belongs in <head>. The browser silently moves this <' + name + '> into <body> when rendering, which can reorder your page.',
-          'Move it below <body>.');
+          'Move it below <body>.', [name]);
     }
     if (inBody && HEAD_ONLY.has(name) && !openTitles().length)
       add('info', tag.s, tag.e, 'body-head-el', '<' + name + '> in the body',
           'HTML 4 says <' + name + '> belongs in <head>. The browser applies it anyway, but keep it in <head> to stay standard.',
-          'Move it inside <head>.');
+          'Move it inside <head>.', [name, 'head']);
 
     /* implicit closes: <li>a<li>b  /  <p>a<p>b  … (p is left to the
        block-in-p warning instead — that phrasing teaches more) */
@@ -848,7 +856,7 @@ function validateHtml(add){
       stack.pop();
       add('info', top.s, top.e, 'implicit-close', '<' + top.name + '> closed automatically',
           'This <' + top.name + '> ends here because the next <' + name + '> started — HTML 4 lets you omit </' + top.name + '>.',
-          'Adding </' + top.name + '> makes the structure easier to read.');
+          'Adding </' + top.name + '> makes the structure easier to read.', [top.name]);
     }
 
     /* hierarchy: parent constraints */
@@ -864,26 +872,26 @@ function validateHtml(add){
           : (name === 'li' ? ' Browsers quietly pull the item out, or wrap it in a structure you didn\'t ask for.' : '');
         add('err', tag.s, tag.e, 'bad-parent', '<' + name + '> must sit inside ' + parents,
             '<' + name + '> ' + where + '.' + note,
-            'Wrap it in ' + parents + ' first.');
+            'Wrap it in ' + parents + ' first.', [name, need[0]]);
       }
     }
     /* block element inside a paragraph */
     if (stack.length && stack[stack.length - 1].name === 'p' && BLOCK.has(name))
       add('warn', tag.s, tag.e, 'block-in-p', '<' + name + '> inside a paragraph',
           'A <p> may only contain text and inline elements. The browser closes the paragraph on its own the moment it sees <' + name + '>, splitting your text in two.',
-          'Close the <p> before <' + name + '>, or replace the <p> with a <div>.');
+          'Close the <p> before <' + name + '>, or replace the <p> with a <div>.', ['p', name]);
     /* nested forms */
     if (name === 'form' && stack.some(e => e.name === 'form'))
       add('err', tag.s, tag.e, 'form-nest', 'Forms can\'t nest',
           'This <form> opens inside another <form>. HTML forbids nested forms; the browser drops the inner one and its controls may stop submitting.',
-          'Use one <form>, or two separate forms that don\'t overlap.');
+          'Use one <form>, or two separate forms that don\'t overlap.', ['form']);
 
     /* void element notes */
     if (VOID.has(name)){
       if (tag.selfClose)
         add('info', tag.s, tag.e, 'self-close', 'The "/" in <' + name + '/> is ignored',
             'HTML is not XHTML: <' + name + '> is a void element with no closing tag, and the trailing slash does nothing.',
-            'Write <' + name + '> on its own.');
+            'Write <' + name + '> on its own.', [name]);
     } else {
       stack.push({name, s:tag.s, e:tag.e, nameS:tag.nameS, nameE:tag.nameE});
     }
@@ -896,13 +904,13 @@ function validateHtml(add){
     if (VOID.has(name)){
       add('err', tag.s, tag.e, 'void-close', '</' + name + '> — void elements have no closing tag',
           '<' + name + '> is a void element: it has no content, so there is nothing to close. The browser ignores </' + name + '>.',
-          'Delete </' + name + '>.');
+          'Delete </' + name + '>.', [name]);
       return;
     }
     if (UNIQUE.has(name) && name !== 'html' && !stack.some(e => e.name === name) && !OPT_END.has(name)){
       add('err', tag.s, tag.e, 'stray-close', '</' + name + '> has no matching opening tag',
           'There is no open <' + name + '> to close.',
-          'Delete </' + name + '>, or add the opening tag.');
+          'Delete </' + name + '>, or add the opening tag.', [name]);
       return;
     }
     let idx = -1;
@@ -910,7 +918,7 @@ function validateHtml(add){
     if (idx < 0){
       add('err', tag.s, tag.e, 'stray-close', '</' + name + '> closes nothing',
           'No <' + name + '> element is open at this point — it was already closed, or never opened.',
-          'Delete </' + name + '> or move it inside the element it should close.');
+          'Delete </' + name + '> or move it inside the element it should close.', [name]);
       return;
     }
     /* anything still open above idx is either implicitly closed (optional
@@ -921,10 +929,10 @@ function validateHtml(add){
       if (OPT_END.has(e.name)) continue;   /* closed with its parent — normal HTML 4 */
       add('err', e.s, e.e, 'missing-close', 'Missing </' + e.name + '>',
           'The <' + e.name + '> opened here is still open when </' + name + '> closes <' + name + '> — the tags intersect. Everything you meant to have inside <' + e.name + '> ends early.',
-          'Add </' + e.name + '> before </' + name + '>.');
+            'Add </' + e.name + '> before </' + name + '>.', [e.name, name]);
       add('err', tag.s, tag.e, 'bad-nesting', '</' + name + '> crosses an open tag',
           'This closes <' + name + '>, but <' + e.name + '> (opened at line ' + lineCol(e.s).line + ') opened after it and is still open. Tags must close in reverse order, like nested boxes.',
-          'Move </' + e.name + '> to before </' + name + '>.');
+            'Move </' + e.name + '> to before </' + name + '>.', [name, e.name]);
     }
     stack.length = idx;    /* pop idx and everything above it */
   }
@@ -956,7 +964,7 @@ function validateHtml(add){
         add('err', a.nS, a.nE, 'bad-attr', '"' + an + '" is not valid on <' + name + '>',
             'The <' + name + '> element has no attribute called "' + an + '". The browser ignores it' +
             (an === 'src' || an === 'href' ? ' — which for this attribute usually means the element does nothing at all.' : '.') + hint,
-            sug ? 'Did you mean ' + sug + '=?' : 'Check the spelling of the attribute.');
+            sug ? 'Did you mean ' + sug + '=?' : 'Check the spelling of the attribute.', [name]);
         continue;
       }
       if (!a.hasEq && !BOOLEANS.has(an)){
@@ -977,7 +985,7 @@ function validateHtml(add){
       if (an === 'style' && a.val) styleDecls.push({val:a.val, base:a.vS});
       if (name === 'bdo' && an === 'dir' && a.val && !/^(ltr|rtl)$/i.test(a.val))
         add('warn', a.vS, a.vE, 'bdo-dir', '<bdo> needs dir="ltr" or dir="rtl"',
-            'dir is the whole point of <bdo>; "' + a.val + '" isn\'t a valid direction.', 'Use ltr or rtl.');
+            'dir is the whole point of <bdo>; "' + a.val + '" isn\'t a valid direction.', 'Use ltr or rtl.', ['bdo']);
     }
   }
 
@@ -986,16 +994,16 @@ function validateHtml(add){
     if (!OPT_END.has(e.name) && !e.reported)
       add('err', e.s, e.e, 'unclosed-eof', 'Missing </' + e.name + '>',
           'The <' + e.name + '> opened here is never closed — the file ends first. Everything after it is treated as its content.',
-          'Add </' + e.name + '> where the element should end.');
+          'Add </' + e.name + '> where the element should end.', [e.name]);
   }
   if (!doctypeSeen && tags.some(t => t.kind === 'start'))
     add('err', 0, 0, 'missing-doctype', 'Missing <!doctype html>',
         'The document has no <!doctype html> on its first line, so the browser renders in "quirks mode" — a bag of old, inconsistent layout rules that quietly changes how your page looks.',
-        'Add <!doctype html> as the very first line.');
+        'Add <!doctype html> as the very first line.', ['doctype']);
   if (!seen.html && tags.some(t => t.kind === 'start'))
     add('info', 0, 0, 'implied-root', 'No <html>, <head> or <body>',
         'HTML 4 implies these elements: browsers create them around your content automatically. Writing them makes the structure explicit and easier to reason about.',
-        'Wrap the page in <html>, <head>…</head> and <body>…</body>.');
+        'Wrap the page in <html>, <head>…</head> and <body>…</body>.', ['html', 'head', 'body']);
 
   return styleDecls;
 }
@@ -1720,7 +1728,7 @@ function renderList(){
 }
 function renderDetail(e){
   if (!e){
-    detailEl.innerHTML = '<span class="det-hint">Pick a problem from the list, or hover one of the underlines in the editor.</span>';
+    detailEl.innerHTML = '<span class="det-hint">Pick a problem from the list, or move the cursor onto one of the underlines in the editor.</span>';
     return;
   }
   const chip = e.sev === 'err' ? 'error' : e.sev === 'warn' ? 'warning' : 'hint';
@@ -1731,6 +1739,11 @@ function renderDetail(e){
   const snip = trunc(src.slice(e.s, Math.max(e.e, e.s + 1)).replace(/\n+/g, ' '), 90);
   if (snip.trim()) html += '<div class="det-snip">' + escH(snip) + '</div>';
   if (e.fix) html += '<div class="det-fix"><b>Fix:</b> ' + escH(e.fix) + '</div>';
+  if (e.mdn && e.mdn.length){
+    const links = e.mdn.map(t =>
+      '<a target="_blank" rel="noopener" href="' + mdnUrl(t) + '">&lt;' + escH(t) + '&gt; on MDN ↗</a>').join(' · ');
+    html += '<div class="det-links">MDN: ' + links + '</div>';
+  }
   detailEl.innerHTML = html;
 }
 
@@ -1814,9 +1827,12 @@ function update(){
   const tk = tokenizeHtml(src);
   tokens = tk.tokens; tags = tk.tags; raws = tk.raws;
   errors = [];
-  const add = (sev, s, e, code, title, msg, fix) => {
+  const add = (sev, s, e, code, title, msg, fix, mdn) => {
     const lc = lineCol(s);
-    errors.push({sev, s, e:Math.max(e, s + 1), code, title, msg, fix, line:lc.line, col:lc.col});
+    const err = {sev, s, e:Math.max(e, s + 1), code, title, msg, fix, line:lc.line, col:lc.col};
+    if (mdn && mdn.length) err.mdn = mdn;
+    errors.push(err);
+    return err;
   };
   const LINT_CSS = false;   /* CSS checking arrives in a separate lesson — flip to enable */
   const styleDecls = validateHtml(add);

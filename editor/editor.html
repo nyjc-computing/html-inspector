@@ -88,8 +88,8 @@ main{flex:1;display:flex;min-height:0;min-width:0}
 .e-info.active{background:rgba(9,105,218,.26)}
 
 /* ============================================================
-   BOTTOM PANEL — slim bar always visible; details open on
-   hover / click of a highlighted error.
+   BOTTOM PANEL — slim bar always visible; the details follow the
+   typing cursor when it sits on a highlighted error.
    ============================================================ */
 #panel{flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
@@ -172,12 +172,12 @@ dialog#help th{background:#f2f4f7}
 <div id="panel">
   <div id="panel-bar">
     <span id="counts"></span>
-    <span id="hint">Hover or click a squiggly underline (or a red line number) to see what's wrong.</span>
+    <span id="hint">Move the cursor onto a squiggly underline (or click a marked line number) to see what's wrong.</span>
     <button id="panel-toggle" title="Show details">▲</button>
   </div>
   <div id="panel-body">
     <ul id="err-list"></ul>
-    <div id="err-detail"><span class="det-hint">Pick a problem from the list, or hover one of the underlines in the editor.</span></div>
+    <div id="err-detail"><span class="det-hint">Pick a problem from the list, or move the cursor onto one of the underlines in the editor.</span></div>
   </div>
 </div>
 
@@ -225,7 +225,7 @@ dialog#help th{background:#f2f4f7}
     <ul>
       <li><b>Tab</b> indents. <b>Esc</b> collapses this details pane — the ▲ button at the bottom-right brings it back.</li>
       <li>The preview re-renders automatically shortly after you stop typing — a small amber note tells you when it is momentarily out of date.</li>
-      <li>The page opens pre-filled with a buggy example on purpose: hover the underlines to diagnose it. Correct examples: <code>?example=starter</code> and <code>?example=table</code> in the address.</li>
+      <li>The page opens pre-filled with a buggy example on purpose: move the cursor onto the underlines to diagnose it. Correct examples: <code>?example=starter</code> and <code>?example=table</code> in the address.</li>
       <li>Only HTML 4 elements are in scope (that's the course syllabus). HTML5-only tags such as
           <code>&lt;header&gt;</code> get a warning, not an error.</li>
       <li>Elements whose closing tag HTML 4 lets you omit (<code>&lt;li&gt;</code>, <code>&lt;p&gt;</code>,
@@ -536,11 +536,11 @@ const pv = $('#pv'), pvNote = $('#pv-note'), panel = $('#panel'), panelToggle = 
 const countsEl = $('#counts'), listEl = $('#err-list');
 const detailEl = $('#err-detail'), posEl = $('#pos'), hintEl = $('#hint');
 const LH = 22, PADT = 8, PADL = 12;
-let src = '', lines = [0], charW = 8.4;
+let src = '', lines = [0];
 let tokens = [], tags = [], raws = [];
 let errors = [];               /* {sev,s,e,code,title,msg,fix,line,col} */
 let pieces = [];               /* non-overlapping render ranges {s,e,sev,id} */
-let activeErr = null, pinnedErr = null, runTimer = null;
+let activeErr = null, suppressId = null, runTimer = null;
 
 /* ============================================================
    LINE INDEX
@@ -1705,7 +1705,7 @@ function renderCounts(){
     (nE ? '<span class="n-err">' + nE + ' error' + (nE > 1 ? 's' : '') + '</span>' : '') +
     (nW ? (nE ? ' · ' : '') + '<span class="n-warn">' + nW + ' warning' + (nW > 1 ? 's' : '') + '</span>' : '') +
     (nI ? ((nE || nW) ? ' · ' : '') + '<span class="n-info">' + nI + ' hint' + (nI > 1 ? 's' : '') + '</span>' : '');
-  hintEl.textContent = 'Hover or click a squiggly underline (or a marked line number) for details.';
+  hintEl.textContent = 'Move the cursor onto a squiggly underline (or a marked line number) for details.';
 }
 function renderList(){
   let html = '';
@@ -1734,31 +1734,12 @@ function renderDetail(e){
 }
 
 /* ============================================================
-   EDITOR GLUE — sync, hover mapping, active error
+   EDITOR GLUE — scroll sync, caret-driven details
    ============================================================ */
-function measureFont(){
-  const probe = document.createElement('span');
-  probe.textContent = 'M'.repeat(50);
-  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:inherit';
-  hl.appendChild(probe);
-  const w = probe.getBoundingClientRect().width / 50;
-  hl.removeChild(probe);
-  if (w > 1) charW = w;
-}
 function syncScroll(){
   hl.scrollTop = ta.scrollTop;
   hl.scrollLeft = ta.scrollLeft;
   gutterIn.style.transform = 'translateY(' + (-ta.scrollTop) + 'px)';
-}
-function offsetAt(clientX, clientY){
-  const r = ta.getBoundingClientRect();
-  const x = clientX - r.left + ta.scrollLeft - PADL;
-  const y = clientY - r.top + ta.scrollTop - PADT;
-  const li = Math.max(0, Math.min(lines.length - 1, Math.floor(y / LH)));
-  const lineStart = lines[li];
-  const lineEnd = li + 1 < lines.length ? lines[li + 1] - 1 : src.length;
-  const col = Math.max(0, Math.min(lineEnd - lineStart, Math.floor(x / charW)));
-  return {off: lineStart + col, li};
 }
 function errNear(off){
   let best = null, bestRank = 9;
@@ -1770,33 +1751,49 @@ function errNear(off){
   }
   return best;
 }
-function setActive(e, mode){
+function setActive(e){
   activeErr = e;
   hl.querySelectorAll('.e.active').forEach(el => el.classList.remove('active'));
   listEl.querySelectorAll('li.active').forEach(el => el.classList.remove('active'));
-  if (e){
-    const id = errors.indexOf(e);
-    hl.querySelectorAll('.e[data-e="' + id + '"]').forEach(el => el.classList.add('active'));
-    const row = listEl.querySelector('li[data-e="' + id + '"]');
-    if (row){ row.classList.add('active'); row.scrollIntoView({block:'nearest'}); }
-    renderDetail(e);
-    if (mode === 'hover' || mode === 'click') openPanel();
-  } else if (pinnedErr){
-    renderDetail(pinnedErr);
+  if (!e) return;
+  const id = errors.indexOf(e);
+  hl.querySelectorAll('.e[data-e="' + id + '"]').forEach(el => el.classList.add('active'));
+  const row = listEl.querySelector('li[data-e="' + id + '"]');
+  if (row){ row.classList.add('active'); row.scrollIntoView({block:'nearest'}); }
+  renderDetail(e);
+}
+/* the details pane follows the typing cursor: whatever finding the cursor
+   sits on (or within one character of) is the one explained below */
+function updateCaretDetail(){
+  const hit = errNear(ta.selectionStart);
+  if (hit){
+    const id = errors.indexOf(hit);
+    setActive(hit);
+    if (suppressId === id) return;   /* the user just hid this one */
+    suppressId = null;
+    openPanel();
+  } else {
+    setActive(null);
+    suppressId = null;
+    if (panel.classList.contains('open')) renderCaretClear();
   }
+}
+function renderCaretClear(){
+  const p = lineCol(ta.selectionStart);
+  detailEl.innerHTML = '<span class="det-hint">No findings at the cursor (line ' + p.line +
+    ', col ' + p.col + '). Move the cursor onto a squiggle, or pick a problem from the list.</span>';
 }
 function setPanel(open){
   panel.classList.toggle('open', open);
   panelToggle.textContent = open ? '▼' : '▲';
   panelToggle.title = open ? 'Hide details' : 'Show details';
-  if (!open) pinnedErr = null;
+  if (open) suppressId = null;
+  else if (activeErr) suppressId = errors.indexOf(activeErr);   /* stay hidden while the cursor stays on it */
 }
 function openPanel(){ setPanel(true); }
-function closePanel(){
-  setPanel(false);
-  setActive(null);
-}
+function closePanel(){ setPanel(false); }
 function jumpTo(e){
+  suppressId = null;
   ta.focus();
   ta.setSelectionRange(e.s, Math.max(e.s + 1, Math.min(e.e, src.length)));
   const li = lineIdx(e.s);
@@ -1804,6 +1801,7 @@ function jumpTo(e){
   ta.scrollLeft = 0;
   syncScroll();
   updatePos();
+  updateCaretDetail();
 }
 
 /* ============================================================
@@ -1829,10 +1827,7 @@ function update(){
   renderGutter();
   renderCounts();
   renderList();
-  if (activeErr){
-    const id = errors.indexOf(activeErr);
-    if (id < 0){ activeErr = pinnedErr = null; renderDetail(null); }
-  }
+  updateCaretDetail();
   scheduleRun();
 }
 function scheduleRun(){
@@ -1876,21 +1871,8 @@ ta.addEventListener('keydown', e => {
     closePanel();
   }
 });
-ta.addEventListener('keyup', updatePos);
-ta.addEventListener('click', e => {
-  updatePos();
-  const hit = errNear(offsetAt(e.clientX, e.clientY).off);
-  if (hit){ pinnedErr = hit; setActive(hit, 'click'); }
-});
-let lastHover = 0;
-ta.addEventListener('mousemove', e => {
-  const now = Date.now();
-  if (now - lastHover < 40) return;   /* time-based throttle: rAF never fires in background tabs */
-  lastHover = now;
-  const hit = errNear(offsetAt(e.clientX, e.clientY).off);
-  if (hit !== activeErr) setActive(hit, hit ? 'hover' : null);
-});
-ta.addEventListener('mouseleave', () => { if (activeErr && !pinnedErr) setActive(null); });
+ta.addEventListener('keyup', () => { updatePos(); updateCaretDetail(); });
+ta.addEventListener('click', () => { updatePos(); updateCaretDetail(); });
 
 gutterEl.addEventListener('click', e => {
   const ln = e.target.closest('.ln');
@@ -1903,17 +1885,17 @@ gutterEl.addEventListener('click', e => {
     if (l === li){ best = er; break; }
     if (l > li && !best) { best = er; break; }
   }
-  if (best){ pinnedErr = best; setActive(best, 'click'); jumpTo(best); }
+  if (best) jumpTo(best);
 });
 listEl.addEventListener('click', e => {
   const li = e.target.closest('li');
   if (!li) return;
   const err = errors[+li.dataset.e];
-  if (err){ pinnedErr = err; setActive(err, 'click'); jumpTo(err); }
+  if (err) jumpTo(err);
 });
 listEl.addEventListener('mousemove', e => {
   const li = e.target.closest('li');
-  if (li){ const err = errors[+li.dataset.e]; if (err && err !== activeErr) setActive(err, 'list'); }
+  if (li){ const err = errors[+li.dataset.e]; if (err && err !== activeErr) setActive(err); }
 });
 $('#panel-toggle').addEventListener('click', () => setPanel(!panel.classList.contains('open')));
 $('#help-btn').addEventListener('click', () => $('#help').showModal());
@@ -2096,9 +2078,6 @@ EXAMPLES.table =
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try{ localStorage.setItem('editor.code.v2', ta.value); }catch{} }, 800);
   });
-  measureFont();
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureFont);
-  window.addEventListener('resize', measureFont);
   update();
   runPreview();
 })();

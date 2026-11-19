@@ -47,9 +47,10 @@ page itself never grows scrollbars.
 Browsers quietly forgive HTML mistakes, which is exactly what confuses
 beginners, so the editor re-reads the code the strict way and marks what the
 browser silently fixed: wavy red/orange/blue underlines (error / warning /
-hint) plus dots on the line numbers. Hovering or clicking an underline opens a
-bottom pane with a plain-English explanation, the offending snippet and how to
-fix it; the pane also lists every finding for clicking through, and an
+hint) plus dots on the line numbers. Putting the cursor on an underline — or
+picking a finding from the list — opens a bottom pane with a plain-English
+explanation, the offending snippet and how to fix it; the pane also lists
+every finding, and an
 ▲/▼ button at the bottom-right collapses and expands it. It opens pre-filled
 with a deliberately buggy page so there is something to diagnose straight
 away; two correct examples are reachable via `?example=starter` and

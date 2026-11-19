@@ -648,9 +648,12 @@ function tokenizeHtml(source){
           const q = source[k];
           a.quoted = true; a.vS = k + 1;
           const ve = source.indexOf(q, a.vS);
-          if (ve < 0){
-            /* recover: the browser swallows the rest of the file; we stop at the tag end */
-            let stop = source.indexOf('>', a.vS); if (stop < 0) stop = n;
+          const nl = source.indexOf('\n', a.vS);
+          /* a value that never closes on its own line is unterminated —
+             recover at this tag's '>' so the rest of the file still lints */
+          if (ve < 0 || (nl >= 0 && ve > nl)){
+            let stop = source.indexOf('>', a.vS);
+            if (stop < 0 || (nl >= 0 && stop > nl)) stop = nl < 0 ? n : nl;
             a.vE = stop; a.qClosed = false; j = stop; k = stop;
           } else { a.vE = ve; a.qClosed = true; k = ve + 1; j = k; }
         } else {
@@ -1987,7 +1990,7 @@ EXAMPLES.broken =
 `<!doctype html>
 <html>
 <head>
-  <title>My Hobbies
+  <title>Amanda Tan — JC2 Portfolio
   <style>
     h1 { colour: teal; }
     p { margin: 10; }
@@ -1996,27 +1999,42 @@ EXAMPLES.broken =
   </style>
 </head>
 <body>
-  <h1>My Hobbies</h1>
-  <p>I love <b>football<i> and </b>chess</i> on weekends.
-  <p>My cat & I also enjoy baking.
-  <div>Fish & Chips
+  <h1>Amanda Tan — JC2 Portfolio</h1>
+  <p>Hi! I am a JC2 student who loves <b>computing<i> and </b>robotics</i>.
+  <p>My CCA & achievements are listed below.
+  <div>Projects & contact details
+
+  <h2>My subjects</h2>
   <table border="1">
-    <td>Row straight in the table?</td>
-    <tr><td>proper cell</td>
+    <td>H2 Computing</td>
+    <tr><td>H2 Mathematics</td>
   </table>
-  <img scr="cat.png" align="centre" alt="My cat photo>
+
+  <img scr="robot.jpg" align="centre" alt="My robotics team photo>
   <br>
   </br>
-  <seciton>Extra</seciton>
+  <seciton>Featured projects</seciton>
   <ul>
-    <li>Chess
-    <li>Swimming
+    <li>Line-following robot
+    <li>Class timetable web app
   </ul>
+  </ul>
+  <div href="#contact">Contact details are at the bottom</div>
+
   <body>
-    <p>Second body?!</p>
+    <h2>Contact me</h2>
+    <form action="mailto:amanda@example.com">
+      <p>Email: <input type="text" name="email"></p>
+      <form action="/robotics-club">
+        <p>Robotics club mailing list: <input type="text" name="club"></p>
+      </form>
+      <p><input type="submit" value="Send"></p>
+    </form>
   </body>
-</body>
+
+  <footer>&copy; 2026 Amanda Tan</footer>
 </html>
+<!-- TODO: add more projects
 `;
 EXAMPLES.table =
 `<!doctype html>

@@ -60,13 +60,14 @@ duplicate singleton elements (`<html>`, `<body>`…), intersecting tags
 HTML5-only tags, invalid attributes and attribute values, missing closing
 tags, closing tags on void elements (`</br>`), unclosed quotes, content in the
 wrong place (text in `<head>`, block elements inside `<p>`), unterminated
-`<title>`/`<style>`/`<script>`, stray `&`, and on the CSS side: unknown
-properties, invalid values, missing units, missing `:`/`;`/`}` and
-declarations outside a rule. Scope is HTML 4 (the course syllabus); HTML5-only
-tags get a warning, not an error, and a missing `<!doctype html>` is an error
-(quirks mode). Tab-indent, a preview that
+`<title>`/`<style>`/`<script>`, stray `&`. Scope is HTML 4 (the course
+syllabus); HTML5-only tags get a warning, not an error, and a missing
+`<!doctype html>` is an error (quirks mode). CSS is not checked for now —
+that arrives in a separate lesson (the checker is built and switched off
+behind a flag). Tab-indent, a preview that
 re-renders on its own shortly after each edit (a small amber note marks it as
-out of date in the meantime), and code that autosaves in the browser.
+out of date in the meantime, and a placeholder explains a blank page instead
+of leaving one unexplained), and code that autosaves in the browser.
 
 No build step and no dependencies — it is a single file. Serve it from the repo
 root (`python scripts/dev_server.py`, then `/editor/editor.html`) or just open

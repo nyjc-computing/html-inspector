@@ -41,8 +41,15 @@ main{flex:1;display:flex;min-height:0;min-width:0}
 #split{flex:0 0 6px;cursor:col-resize;background:var(--bg);
   border-left:1px solid var(--line);border-right:1px solid var(--line)}
 #split:hover,#split.drag{background:#b9c6d4}
-#preview-pane{flex:1;min-width:240px;display:flex;flex-direction:column;background:var(--panel)}
+#preview-pane{flex:1;min-width:240px;display:flex;flex-direction:column;background:var(--panel);position:relative}
 #pv{flex:1;width:100%;border:0;background:#fff;min-height:0}
+#pv-empty{position:absolute;left:12px;right:12px;top:44px;bottom:10px;overflow:auto;
+  background:#fbfcfd;border:1px dashed #c9ced6;border-radius:8px;
+  display:flex;flex-direction:column;justify-content:center;gap:6px;
+  padding:14px 24px;color:var(--dim);font-size:13.5px}
+#pv-empty b{color:var(--ink);font-size:14.5px}
+#pv-empty code{font:12.5px var(--mono);background:#f2f4f7;border-radius:3px;padding:0 4px}
+#pv-empty[hidden]{display:none}
 .pane-head .note.stale{color:var(--warn);font-weight:600;animation:pulse 1.1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
@@ -166,6 +173,13 @@ dialog#help th{background:#f2f4f7}
   <section id="preview-pane">
     <div class="pane-head">Preview <span class="note" id="pv-note">updates as you type</span></div>
     <iframe id="pv" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="HTML preview"></iframe>
+    <div id="pv-empty" hidden>
+      <b>The preview is blank.</b>
+      <span>The browser has nothing visible to render from this document. A common cause: an unclosed
+      <code>&lt;title&gt;</code>, <code>&lt;style&gt;</code> or <code>&lt;!--</code> comment swallows the
+      rest of the page — check the red underlines in the editor; the details pane below explains each one.</span>
+      <span>If the page really has no content yet, start by adding some inside <code>&lt;body&gt;</code>.</span>
+    </div>
   </section>
 </main>
 
@@ -211,21 +225,12 @@ dialog#help th{background:#f2f4f7}
       <tr><td>Unterminated <code>&lt;title&gt;</code>/<code>&lt;style&gt;</code>/<code>&lt;script&gt;</code></td><td>everything after it disappears from the page</td></tr>
       <tr><td>Stray <code>&amp;</code></td><td>write <code>&amp;amp;</code></td></tr>
     </table>
-    <h3>CSS checks (inside <code>&lt;style&gt;</code> and <code>style="…"</code>)</h3>
-    <table>
-      <tr><th>Check</th><th>Example</th></tr>
-      <tr><td>Unknown property</td><td><code>colour: red;</code></td></tr>
-      <tr><td>Invalid value</td><td><code>color: 12px;</code>, <code>float: up;</code></td></tr>
-      <tr><td>Missing unit on a length</td><td><code>margin: 10;</code> → <code>margin: 10px;</code></td></tr>
-      <tr><td>Missing <code>:</code> or <code>;</code></td><td><code>font-family Arial;</code></td></tr>
-      <tr><td>Missing <code>}</code></td><td>a rule never closed — everything after it joins that rule</td></tr>
-      <tr><td>Declarations outside a rule</td><td><code>color: red;</code> sitting above all the <code>{ }</code></td></tr>
-    </table>
     <h3>Tips</h3>
     <ul>
       <li><b>Tab</b> indents. <b>Esc</b> collapses this details pane — the ▲ button at the bottom-right brings it back.</li>
       <li>The preview re-renders automatically shortly after you stop typing — a small amber note tells you when it is momentarily out of date.</li>
       <li>The page opens pre-filled with a buggy example on purpose: move the cursor onto the underlines to diagnose it. Correct examples: <code>?example=starter</code> and <code>?example=table</code> in the address.</li>
+      <li>Only the HTML is checked for now — CSS checking arrives in a separate lesson.</li>
       <li>Only HTML 4 elements are in scope (that's the course syllabus). HTML5-only tags such as
           <code>&lt;header&gt;</code> get a warning, not an error.</li>
       <li>Elements whose closing tag HTML 4 lets you omit (<code>&lt;li&gt;</code>, <code>&lt;p&gt;</code>,
@@ -1817,11 +1822,14 @@ function update(){
     const lc = lineCol(s);
     errors.push({sev, s, e:Math.max(e, s + 1), code, title, msg, fix, line:lc.line, col:lc.col});
   };
+  const LINT_CSS = false;   /* CSS checking arrives in a separate lesson — flip to enable */
   const styleDecls = validateHtml(add);
-  for (const r of raws){
-    if (r.name === 'style') lintCssText(src.slice(r.s, r.e), r.s, add, 'style');
+  if (LINT_CSS){
+    for (const r of raws){
+      if (r.name === 'style') lintCssText(src.slice(r.s, r.e), r.s, add, 'style');
+    }
+    for (const d of styleDecls) lintDecls(d.val, d.base, add);
   }
-  for (const d of styleDecls) lintDecls(d.val, d.base, add);
   errors.sort((a, b) => a.s - b.s);
   renderOverlay();
   renderGutter();
@@ -1837,10 +1845,36 @@ function scheduleRun(){
   runTimer = setTimeout(runPreview, 400);
 }
 function runPreview(){
-  pv.srcdoc = ta.value;
+  /* inject a tiny probe that reports whether the rendered document shows
+     anything visible — the sandbox keeps the parent from reading the frame */
+  const boot = '<scr' + 'ipt>(function(){function rpt(){try{' +
+    'var b=document.body,fr=document.querySelector("frameset>frame");' +
+    'var empty=!fr;' +
+    'if(b&&!fr){' +
+      'var txt=(b.innerText||"").replace(/\\u200b/g,"").trim();' +
+      'var media=b.querySelector("img,video,canvas,embed,object,iframe,input,textarea,select");' +
+      'empty=(txt===""&&!media);' +
+    '}' +
+    'parent.postMessage({source:"htmldoctor",empty:empty},"*");' +
+  '}catch(e){}}' +
+  'document.addEventListener("DOMContentLoaded",rpt);' +
+  'window.addEventListener("load",function(){rpt();setTimeout(rpt,600);});' +
+  '})();</scr' + 'ipt>';
+  const doc = ta.value;
+  const headM = /(<head[^>]*>)/i.exec(doc);
+  const dtM = /<!doctype[^>]*>/i.exec(doc);
+  let out;
+  if (headM) out = doc.slice(0, headM.index + headM[1].length) + boot + doc.slice(headM.index + headM[1].length);
+  else if (dtM) out = doc.slice(0, dtM.index + dtM[0].length) + boot + doc.slice(dtM.index + dtM[0].length);
+  else out = boot + doc;
+  pv.srcdoc = out;
   pvNote.textContent = 'updates as you type';
   pvNote.classList.remove('stale');
 }
+window.addEventListener('message', e => {
+  if (e.source === pv.contentWindow && e.data && e.data.source === 'htmldoctor')
+    document.querySelector('#pv-empty').hidden = !e.data.empty;
+});
 function updatePos(){
   const p = lineCol(ta.selectionStart === undefined ? 0 : ta.selectionStart);
   posEl.textContent = 'line ' + p.line + ', col ' + p.col;
@@ -1974,10 +2008,10 @@ EXAMPLES.broken =
 <head>
   <title>Nyla Yang — JC2 Portfolio
   <style>
-    h1 { colour: teal; }
-    p { margin: 10; }
-    body { font-family Arial; }
-    b { color: red
+    h1 { color: teal; }
+    p { margin: 10px; }
+    body { font-family: Arial, sans-serif; }
+    b { color: red; }
   </style>
 </head>
 <body>
@@ -2067,7 +2101,7 @@ EXAMPLES.table =
    ============================================================ */
 (function boot(){
   let initial = null;
-  try{ initial = localStorage.getItem('editor.code.v2'); }catch{}
+  try{ initial = localStorage.getItem('editor.code.v3'); }catch{}
   ta.value = initial !== null && initial !== '' ? initial : EXAMPLES.broken;
   const params = new URLSearchParams(location.search);
   if (params.get('example') && EXAMPLES[params.get('example')]){
@@ -2076,7 +2110,7 @@ EXAMPLES.table =
   let saveTimer = null;
   ta.addEventListener('input', () => {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try{ localStorage.setItem('editor.code.v2', ta.value); }catch{} }, 800);
+    saveTimer = setTimeout(() => { try{ localStorage.setItem('editor.code.v3', ta.value); }catch{} }, 800);
   });
   update();
   runPreview();

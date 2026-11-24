@@ -1,4 +1,4 @@
-# Page Viewer
+# HTML Inspector
 
 A DevTools-like **DOM inspector for learning HTML and CSS** — plain HTML, CSS and
 JavaScript, no frameworks and no runtime dependencies. The deployable artefact is a
@@ -111,7 +111,7 @@ python build.py
 
 Commit both the sources and the regenerated `index.html`; GitHub Pages serves the
 single file at the site URL. `python build.py --release` additionally writes a dated
-copy (`page-viewer-<date>.html`) for handing to a teacher or embedding elsewhere.
+copy (`html-inspector-<date>.html`) for handing to a teacher or embedding elsewhere.
 `python scripts/update-mdn-content.py` refreshes the bundled MDN articles.
 
 ## Running it

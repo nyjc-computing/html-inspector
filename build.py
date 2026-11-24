@@ -6,7 +6,7 @@ src/template.html and writes index.html at the project root.
 
 Usage:  python build.py            (normal build)
         python build.py --release  (same, but names the output
-                                    page-viewer-<date>.html too)
+                                    html-inspector-<date>.html too)
 
 index.html is a generated file — edit the sources, then rebuild.
 """
@@ -66,7 +66,7 @@ def build():
 
     if "--release" in sys.argv:
         stamp = time.strftime("%Y%m%d")
-        dest = ROOT / f"page-viewer-{stamp}.html"
+        dest = ROOT / f"html-inspector-{stamp}.html"
         dest.write_text(out, encoding="utf-8", newline="\n")
         print(f"release copy: {dest.name}")
 

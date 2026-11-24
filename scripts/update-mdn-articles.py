@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the bundled MDN articles in js/articles.js for Page Viewer.
+"""Refresh the bundled MDN articles in js/articles.js for HTML Inspector.
 
 The articles are embedded in the app itself, so the Reference panel works
 with no network at all (the deploy target only accepts a single file).
@@ -18,7 +18,7 @@ import urllib.request
 
 DATA_JS = "js/data.js"
 OUT = "js/articles.js"
-UA = {"User-Agent": "Mozilla/5.0 (Page Viewer article updater)"}
+UA = {"User-Agent": "Mozilla/5.0 (HTML Inspector article updater)"}
 BASES = [
     "https://cdn.jsdelivr.net/gh/mdn/content@main/files/en-us/",
     "https://raw.githubusercontent.com/mdn/content/main/files/en-us/",

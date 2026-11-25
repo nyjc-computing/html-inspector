@@ -34,6 +34,18 @@ const PROXIES = [
   {name:'corsproxy.io', make:u=>'https://corsproxy.io/?url='+encodeURIComponent(u)},
 ];
 
+/* Same-origin /fetch proxy first when served over http(s) — the dev
+   server (scripts/dev_server.py) and the campus-apphost deployment
+   provide it, so the embedded SPA never depends on the public proxies.
+   Public proxies stay as fallback. On file: a relative /fetch would
+   resolve to file:///fetch, so it is only added for real origins. */
+if (location.protocol === 'http:' || location.protocol === 'https:') {
+  PROXIES.unshift({name:'local', make:u=>'/fetch?url='+encodeURIComponent(u)});
+}
+
+/* Cache-buster appended to the MDN CDN fetches (refreshed every minute) */
+const MDN_BUST = '?mdnv=' + Math.floor(Date.now() / 60000);
+
 /* ============================================================
    MDN REFERENCE PANEL — instant local summary, full MDN page
    fetched through the same proxy chain when the network allows
@@ -80,21 +92,29 @@ const mdn = {
     };
     const slug = mdnSlug(key);
     const flat = slug && slug.split('/').join('--');
+    /* cache-bust the CDN fetches per minute: a stale 404/error cached by
+       the browser or an intermediating school proxy otherwise sticks (and
+       Edge's "disable cache" while DevTools is open was the only cure) */
+    const bust = MDN_BUST;
     const sources = [];
     if(flat && typeof MDN_ARTICLES !== 'undefined' && MDN_ARTICLES[flat]){
       sources.push([null, true]);                       /* embedded article — no fetch */
     }
     if(slug){
-      sources.push([mdnRawUrl(slug, 'https://cdn.jsdelivr.net/gh/mdn/content@main/files/en-us/'), true]);
-      sources.push([mdnRawUrl(slug, 'https://raw.githubusercontent.com/mdn/content/main/files/en-us/'), true]);
+      sources.push([mdnRawUrl(slug, 'https://cdn.jsdelivr.net/gh/mdn/content@main/files/en-us/') + bust, true]);
+      sources.push([mdnRawUrl(slug, 'https://raw.githubusercontent.com/mdn/content/main/files/en-us/') + bust, true]);
     }
     sources.push([pageUrl, false]);
     let chain = Promise.reject(new Error('no sources'));
     for(const [u, direct] of sources){
       chain = chain.catch(() => {
         if(u === null) return Promise.resolve(mdToHtml(MDN_ARTICLES[flat], pageUrl));
+        this.err.textContent = 'Loading the full MDN page — trying '
+          + (u.includes('jsdelivr') ? 'the jsDelivr mirror'
+             : u.includes('raw.githubusercontent') ? 'the GitHub mirror'
+             : 'developer.mozilla.org') + '…';
         return fetchText(u, direct ? 10000 : 15000, direct ? 1 : 2, direct)
-          .then(r => u.endsWith('.md') ? mdToHtml(r.text, pageUrl) : extractMdn(r.text, pageUrl));
+          .then(r => /\.md($|\?)/.test(u) ? mdToHtml(r.text, pageUrl) : extractMdn(r.text, pageUrl));
       }).then(html => done(html));
     }
     chain.catch(fail);
@@ -111,10 +131,24 @@ const mdn = {
 
   render(html){
     this.err.style.display='none';
+    this.frameEl.style.display='block';   /* visible before srcdoc — a
+      hidden/zero-size frame can have its srcdoc load throttled */
     this.frameEl.srcdoc=html;
-    this.frameEl.style.display='block';
   },
 };
+
+/* The MDN mini-frame is sandboxed WITHOUT allow-scripts (MDN content must
+   stay inert). Some article markup carries raw <script> examples or inline
+   handlers — strip them at build-of-html time so the browser never logs
+   blocked-execution warnings for content we generated. */
+function sanitizeMdnHtml(html){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script').forEach(n=>n.remove());
+  doc.querySelectorAll('*').forEach(el=>{
+    for(const a of [...el.attributes]) if(/^on/i.test(a.name)) el.removeAttribute(a.name);
+  });
+  return '<!doctype html>' + doc.documentElement.outerHTML;
+}
 
 function extractMdn(htmlText, pageUrl){
   const doc = new DOMParser().parseFromString(htmlText, 'text/html');
@@ -124,9 +158,9 @@ function extractMdn(htmlText, pageUrl){
   art.querySelectorAll('script,style,link,nav,aside,form,button,input,select,textarea,iframe,object,embed,'
     +'.breadcrumbs,.content-feedback,.article-footer,[id="browser_compatibility"],[role="navigation"]')
     .forEach(n=>n.remove());
-  return '<!doctype html><html><head><meta charset="utf-8">'
+  return sanitizeMdnHtml('<!doctype html><html><head><meta charset="utf-8">'
     +'<base href="'+pageUrl+'" target="_blank">'
-    +'<style>'+MDN_CSS+'</style></head><body>'+art.innerHTML+'</body></html>';
+    +'<style>'+MDN_CSS+'</style></head><body>'+art.innerHTML+'</body></html>');
 }
 
 /* MDN article sources, tried in order:
@@ -214,7 +248,7 @@ function mdToHtml(md, pageUrl){
   const h1 = title ? '<h1>'+inline(title)+'</h1>' : '';
   /* raw HTML blocks (attribute tables) carry repo-relative links */
   let bodyHtml = out.join('\n').replace(/href="\//g, 'href="https://developer.mozilla.org/');
-  return '<!doctype html><html><head><meta charset="utf-8">'
+  return sanitizeMdnHtml('<!doctype html><html><head><meta charset="utf-8">'
     +'<base href="'+pageUrl+'" target="_blank">'
-    +'<style>'+MDN_CSS+'</style></head><body>'+h1+bodyHtml+'</body></html>';
+    +'<style>'+MDN_CSS+'</style></head><body>'+h1+bodyHtml+'</body></html>');
 }

@@ -49,6 +49,13 @@ async function preparePage(htmlText, baseUrl){
   doc.querySelectorAll('*').forEach(el=>{
     for(const a of [...el.attributes]) if(/^on/i.test(a.name)) el.removeAttribute(a.name);
   });
+  /* third-party srcdoc embeds would run (and log sandbox warnings) inside
+     our script-free preview — drop their inline documents, keep src frames */
+  doc.querySelectorAll('iframe[srcdoc]').forEach(n=>n.removeAttribute('srcdoc'));
+  /* scripts inside <template> content are inert but invisible to
+     querySelectorAll on the document — strip them before serialisation */
+  doc.querySelectorAll('template').forEach(t=>
+    t.content.querySelectorAll('script, noscript, object, embed, applet').forEach(n=>n.remove()));
 
   /* our own base: relative URLs resolve against the real site, links stay inert */
   doc.querySelectorAll('base').forEach(b=>b.remove());
